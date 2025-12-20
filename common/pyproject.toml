@@ -1,0 +1,13 @@
+# common/pyproject.toml
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "task_tracker_common"
+version = "0.1.1"
+description = "Shared DTOs, repositories, and messaging utilities for task tracker microservices"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["task_tracker_common"]

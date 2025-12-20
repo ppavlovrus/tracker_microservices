@@ -1,0 +1,11 @@
+Alembic migration for Tasks microservice
+It will create only tables for this microservice, not relations with other tables
+Structure is based on SQLAlchemy models
+Basic file structure for alembic created with command
+```
+alembic init alembic
+```
+affter that migration created by
+```
+alembic revision --autogenerate -m "Initial revision"
+```
