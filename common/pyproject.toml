@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "task_tracker_common"
-version = "0.1.1"
-description = "Shared DTOs, repositories, and messaging utilities for task tracker microservices"
+version = "0.1.2"
+description = "Shared DTOs, repositories, and messaging utilities for task tracker microservices. Also alembic migration will be here"
 
 [tool.setuptools.packages.find]
 where = ["."]
