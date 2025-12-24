@@ -152,3 +152,5 @@ class CommentRepository(BaseRepository):
             )
             return [dict(row) for row in rows]
 
+
+
