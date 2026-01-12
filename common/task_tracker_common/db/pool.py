@@ -5,7 +5,7 @@ from typing import Optional
 
 from fastapi import FastAPI
 
-from task_tracker_common.db.config import (
+from config import (
     DATABASE_URL,
     DB_POOL_MIN_SIZE,
     DB_POOL_MAX_SIZE,
