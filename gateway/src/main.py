@@ -4,10 +4,11 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from task_tracker_common.messaging import RabbitMQClient
 
 from .config import AMQP_URL, SERVICE_NAME, HOST, PORT, LOG_LEVEL
-from .api.routers import tasks, users
+from .api.routers import tasks, users, web
 
 # Setup logging
 logging.basicConfig(
@@ -75,7 +76,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # Include routers
+app.include_router(web.router)
 app.include_router(tasks.router)
 app.include_router(users.router)
 

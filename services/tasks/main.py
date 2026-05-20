@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 db_pool: asyncpg.Pool = None
 rabbitmq_client: RabbitMQClient = None
 task_handlers: TaskHandlers = None
-shutdown_event = asyncio.Event()
+shutdown_event = None
 
 
 async def create_db_pool() -> asyncpg.Pool:
@@ -182,14 +182,18 @@ async def shutdown():
         logger.error(f"Error during shutdown: {e}", exc_info=True)
 
 
-def signal_handler(sig, frame):
-    """Handle shutdown signals."""
-    logger.info(f"Received signal {sig}, initiating shutdown...")
-    shutdown_event.set()
-
-
 async def main():
     """Main entry point."""
+    global shutdown_event
+    
+    # Create shutdown event in the current loop
+    shutdown_event = asyncio.Event()
+    
+    def signal_handler(sig, frame):
+        """Handle shutdown signals."""
+        logger.info(f"Received signal {sig}, initiating shutdown...")
+        shutdown_event.set()
+    
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
