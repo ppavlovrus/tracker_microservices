@@ -42,6 +42,70 @@ services:
       migrations:
         condition: service_completed_successfully
 
+  users:
+    build:
+      context: .
+      dockerfile: services/users/Dockerfile
+    environment:
+      - DB_NAME=task_tracker
+      - DB_HOST=postgres
+      - AMQP_URL=amqp://guest:guest@rabbitmq/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+  comments:
+    build:
+      context: .
+      dockerfile: services/comments/Dockerfile
+    environment:
+      - DB_NAME=task_tracker
+      - DB_HOST=postgres
+      - AMQP_URL=amqp://guest:guest@rabbitmq/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+  tags:
+    build:
+      context: .
+      dockerfile: services/tags/Dockerfile
+    environment:
+      - DB_NAME=task_tracker
+      - DB_HOST=postgres
+      - AMQP_URL=amqp://guest:guest@rabbitmq/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+  attachments:
+    build:
+      context: .
+      dockerfile: services/attachments/Dockerfile
+    environment:
+      - DB_NAME=task_tracker
+      - DB_HOST=postgres
+      - AMQP_URL=amqp://guest:guest@rabbitmq/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
   rabbitmq:
     ports:
       - 15672:15672
