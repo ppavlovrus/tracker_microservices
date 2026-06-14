@@ -8,12 +8,23 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=qwerty
     volumes:
-      - /var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
       timeout: 5s
       retries: 5
+
+  migrations:
+    build:
+      context: .
+      dockerfile: common/Dockerfile
+    environment:
+      - DATABASE_NAME=task_tracker
+      - DATABASE_USERNAME=postgres
+      - DATABASE_PASSWORD=qwerty
+      - DATABASE_HOST=postgres
+    depends_on: { postgres: { condition: service_healthy } }
 
   tasks:
     build:
@@ -23,7 +34,13 @@ services:
       - DB_NAME=task_tracker
       - DB_HOST=postgres
       - AMQP_URL=amqp://guest:guest@rabbitmq/
-    depends_on: { postgres: { condition: service_healthy }, rabbitmq: {condition: service_healthy} }
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
 
   rabbitmq:
     ports:
@@ -37,7 +54,7 @@ services:
       timeout: 5s
       retries: 5
 
-
-
+volumes:
+  pgdata:
 
 
