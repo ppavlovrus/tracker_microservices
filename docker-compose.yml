@@ -1,0 +1,43 @@
+---
+services:
+  postgres:
+    image:
+      postgres:16
+    environment:
+      - POSTGRES_DB=task_tracker
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=qwerty
+    volumes:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  tasks:
+    build:
+      context: .
+      dockerfile: services/tasks/Dockerfile
+    environment:
+      - DB_NAME=task_tracker
+      - DB_HOST=postgres
+      - AMQP_URL=amqp://guest:guest@rabbitmq/
+    depends_on: { postgres: { condition: service_healthy }, rabbitmq: {condition: service_healthy} }
+
+  rabbitmq:
+    ports:
+      - 15672:15672
+      - 5672:5672
+    image:
+      rabbitmq:3-management
+    healthcheck:
+      test: [ "CMD-SHELL", "rabbitmq-diagnostics -q ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+
+
+
+

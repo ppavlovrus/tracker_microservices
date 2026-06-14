@@ -13,6 +13,16 @@ dependencies = [
     "aio-pika>=9.0.0",
 ]
 
+# Migration tooling — installed only where alembic actually runs (one-shot
+# migrations container in production, dev venv via `pip install -e .[migrations]`).
+# Runtime services do not need SQLAlchemy or psycopg2 at all.
+[project.optional-dependencies]
+migrations = [
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg2-binary>=2.9",
+]
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["task_tracker_common"]
+include = ["task_tracker_common*"]
