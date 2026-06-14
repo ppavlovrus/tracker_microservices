@@ -54,6 +54,20 @@ services:
       timeout: 5s
       retries: 5
 
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    environment:
+      - AMQP_URL=amqp://guest:guest@rabbitmq/
+    ports:
+      - "8000:8000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      tasks:
+        condition: service_started
+
 volumes:
   pgdata:
 
