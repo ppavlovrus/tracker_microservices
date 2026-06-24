@@ -2,6 +2,18 @@
 
 from .task import TaskCreate, TaskUpdate, TaskResponse, TaskListResponse
 from .user import UserCreate, UserUpdate, UserResponse, UserListResponse
+from .comment import (
+    CommentCreate,
+    CommentUpdate,
+    CommentResponse,
+    CommentListResponse,
+)
+from .tags import TagCreate, TagUpdate, TagResponse, TagListResponse
+from .attachment import (
+    AttachmentCreate,
+    AttachmentResponse,
+    AttachmentListResponse,
+)
 
 __all__ = [
     # Tasks
@@ -14,4 +26,18 @@ __all__ = [
     "UserUpdate",
     "UserResponse",
     "UserListResponse",
+    # Comments
+    "CommentCreate",
+    "CommentUpdate",
+    "CommentResponse",
+    "CommentListResponse",
+    # Tags
+    "TagCreate",
+    "TagUpdate",
+    "TagResponse",
+    "TagListResponse",
+    # Attachments
+    "AttachmentCreate",
+    "AttachmentResponse",
+    "AttachmentListResponse",
 ]

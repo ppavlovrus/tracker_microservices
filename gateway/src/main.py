@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from task_tracker_common.messaging import RabbitMQClient
 
 from .config import AMQP_URL, SERVICE_NAME, HOST, PORT, LOG_LEVEL
-from .api.routers import tasks, users, web
+from .api.routers import tasks, users, web, comments, tags, attachments
 
 # Setup logging
 logging.basicConfig(
@@ -47,6 +47,9 @@ async def lifespan(app: FastAPI):
         # Set client in routers
         tasks.set_rabbitmq_client(rabbitmq_client)
         users.set_rabbitmq_client(rabbitmq_client)
+        comments.set_rabbitmq_client(rabbitmq_client)
+        tags.set_rabbitmq_client(rabbitmq_client)
+        attachments.set_rabbitmq_client(rabbitmq_client)
         
         logger.info("Gateway service started successfully")
         logger.info(f"RabbitMQ: {AMQP_URL}")
@@ -83,6 +86,9 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(web.router)
 app.include_router(tasks.router)
 app.include_router(users.router)
+app.include_router(comments.router)
+app.include_router(tags.router)
+app.include_router(attachments.router)
 
 
 @app.get("/health")
