@@ -7,6 +7,7 @@ from ...config import RPC_TIMEOUT
 from ..schemas.attachment import (
     AttachmentCreate,
     AttachmentResponse,
+    AttachmentInitiateResponse,
     AttachmentListResponse,
 )
 
@@ -26,9 +27,13 @@ def set_rabbitmq_client(client):
     rabbitmq_client = client
 
 
-@router.post("", response_model=AttachmentResponse, status_code=201)
-async def create_attachment(attachment: AttachmentCreate) -> AttachmentResponse:
-    """Register a new attachment."""
+@router.post("", response_model=AttachmentInitiateResponse, status_code=201)
+async def create_attachment(attachment: AttachmentCreate) -> AttachmentInitiateResponse:
+    """Initiate an attachment upload.
+
+    Returns the attachment metadata plus a presigned URL the client uses to
+    upload the file bytes directly to object storage.
+    """
     if not rabbitmq_client:
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
@@ -45,7 +50,7 @@ async def create_attachment(attachment: AttachmentCreate) -> AttachmentResponse:
             raise HTTPException(status_code=400, detail=error_msg)
 
         logger.info(f"Attachment created successfully: {response['data'].get('id')}")
-        return AttachmentResponse(**response["data"])
+        return AttachmentInitiateResponse(**response["data"])
 
     except HTTPException:
         raise

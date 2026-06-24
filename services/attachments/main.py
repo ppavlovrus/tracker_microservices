@@ -22,9 +22,17 @@ from config import (
     DB_PASSWORD,
     DB_POOL_MIN_SIZE,
     DB_POOL_MAX_SIZE,
+    S3_ENDPOINT_INTERNAL,
+    S3_ENDPOINT_PUBLIC,
+    S3_ACCESS_KEY,
+    S3_SECRET_KEY,
+    S3_BUCKET,
+    S3_REGION,
+    S3_PRESIGN_EXPIRE,
 )
 from src.repositories import AttachmentRepository
 from src.handlers import AttachmentHandlers
+from src.storage import S3Storage
 
 # Setup logging
 logging.basicConfig(
@@ -110,19 +118,31 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
 async def startup():
     """Initialize service components."""
     global db_pool, rabbitmq_client, attachment_handlers
-    
+
     logger.info("=" * 60)
     logger.info(f"Starting {SERVICE_NAME}...")
     logger.info("=" * 60)
-    
+
     try:
         # Create database pool
         db_pool = await create_db_pool()
-        
+
+        # Initialize S3 storage and ensure the bucket exists
+        storage = S3Storage(
+            internal_endpoint=S3_ENDPOINT_INTERNAL,
+            public_endpoint=S3_ENDPOINT_PUBLIC,
+            access_key=S3_ACCESS_KEY,
+            secret_key=S3_SECRET_KEY,
+            bucket=S3_BUCKET,
+            region=S3_REGION,
+            presign_expire=S3_PRESIGN_EXPIRE,
+        )
+        await storage.ensure_bucket()
+
         # Initialize repository and handlers
         attachment_repository = AttachmentRepository(db_pool)
-        attachment_handlers = AttachmentHandlers(attachment_repository)
-        
+        attachment_handlers = AttachmentHandlers(attachment_repository, storage)
+
         logger.info("Repository and handlers initialized")
         
         # Initialize RabbitMQ client

@@ -9,6 +9,7 @@ description = "Attachments microservice for Task Tracker"
 dependencies = [
     "asyncpg>=0.29.0",
     "task_tracker_common>=0.1.3",
+    "boto3>=1.34.0",
 ]
 
 [project.optional-dependencies]

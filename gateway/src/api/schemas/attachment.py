@@ -6,12 +6,15 @@ from pydantic import BaseModel, Field
 
 
 class AttachmentCreate(BaseModel):
-    """Schema for registering a new attachment."""
+    """Schema for initiating an attachment upload.
+
+    The storage key is generated server-side; the client only declares metadata
+    and gets back a presigned URL to upload the bytes.
+    """
 
     task_id: int = Field(..., description="Task the attachment belongs to")
     filename: str = Field(..., min_length=1, max_length=255, description="Original file name")
     content_type: Optional[str] = Field(None, max_length=100, description="MIME type")
-    storage_path: str = Field(..., min_length=1, description="Path/key in storage backend")
     size_bytes: Optional[int] = Field(None, ge=0, description="File size in bytes")
 
 
@@ -25,6 +28,14 @@ class AttachmentResponse(BaseModel):
     storage_path: str
     size_bytes: Optional[int] = None
     uploaded_at: datetime
+    download_url: Optional[str] = Field(None, description="Presigned URL to download the file")
+
+
+class AttachmentInitiateResponse(AttachmentResponse):
+    """Response for upload initiation: metadata + presigned upload URL."""
+
+    upload_url: str = Field(..., description="Presigned URL to PUT the file bytes")
+    upload_expires_in: int = Field(..., description="Upload URL validity in seconds")
 
 
 class AttachmentListResponse(BaseModel):

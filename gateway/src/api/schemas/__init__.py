@@ -12,6 +12,7 @@ from .tags import TagCreate, TagUpdate, TagResponse, TagListResponse
 from .attachment import (
     AttachmentCreate,
     AttachmentResponse,
+    AttachmentInitiateResponse,
     AttachmentListResponse,
 )
 
@@ -39,5 +40,6 @@ __all__ = [
     # Attachments
     "AttachmentCreate",
     "AttachmentResponse",
+    "AttachmentInitiateResponse",
     "AttachmentListResponse",
 ]
