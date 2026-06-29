@@ -17,6 +17,9 @@ REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CACHE_ENABLED: bool = os.getenv("CACHE_ENABLED", "true").lower() == "true"
 CACHE_TTL_TASK: int = int(os.getenv("CACHE_TTL_TASK", "60"))
 CACHE_TTL_TAGS: int = int(os.getenv("CACHE_TTL_TAGS", "300"))
+# Short TTL for the paginated tasks list: it self-expires instead of being
+# invalidated, since a single write can land on any page.
+CACHE_TTL_TASKS_LIST: int = int(os.getenv("CACHE_TTL_TASKS_LIST", "20"))
 
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

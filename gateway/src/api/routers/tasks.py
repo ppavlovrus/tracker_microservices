@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from typing import Annotated
 
-from ...config import RPC_TIMEOUT, CACHE_TTL_TASK
+from ...config import RPC_TIMEOUT, CACHE_TTL_TASK, CACHE_TTL_TASKS_LIST
 from ..schemas.task import (
     TaskCreate,
     TaskUpdate,
@@ -39,6 +39,11 @@ def set_cache(c):
 def _task_key(task_id: int) -> str:
     """Cache key for a single task."""
     return f"task:{task_id}"
+
+
+def _tasks_list_key(limit: int, offset: int) -> str:
+    """Cache key for a tasks-list page."""
+    return f"tasks:list:{limit}:{offset}"
 
 
 @router.post("", response_model=TaskResponse, status_code=201)
@@ -152,7 +157,16 @@ async def list_tasks(
     """
     if not rabbitmq_client:
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
-    
+
+    # Cache-aside: try the cache first. The list uses a short TTL and is not
+    # explicitly invalidated -- a single write can land on any page, so we let
+    # the page self-expire rather than track which keys went stale.
+    if cache:
+        cached = await cache.get_json(_tasks_list_key(limit, offset))
+        if cached is not None:
+            logger.debug(f"Cache HIT for tasks list (limit={limit}, offset={offset})")
+            return TaskListResponse(**cached)
+
     try:
         # Send RPC command to Tasks service
         response = await rabbitmq_client.call(
@@ -166,24 +180,34 @@ async def list_tasks(
             },
             timeout=RPC_TIMEOUT
         )
-        
+
         # Check response
         if not response.get("success"):
             error_msg = response.get("error", "Unknown error")
             logger.error(f"Failed to list tasks: {error_msg}")
             raise HTTPException(status_code=500, detail=error_msg)
-        
+
         data = response["data"]
         tasks = [TaskResponse(**task) for task in data["tasks"]]
-        
-        logger.debug(f"Listed {len(tasks)} tasks (limit={limit}, offset={offset})")
-        return TaskListResponse(
+
+        result = TaskListResponse(
             tasks=tasks,
             total=data.get("total", len(tasks)),
             limit=limit,
             offset=offset
         )
-        
+
+        # Populate the cache with a short TTL
+        if cache:
+            await cache.set_json(
+                _tasks_list_key(limit, offset),
+                result.model_dump(mode="json"),
+                CACHE_TTL_TASKS_LIST,
+            )
+
+        logger.debug(f"Listed {len(tasks)} tasks (limit={limit}, offset={offset})")
+        return result
+
     except HTTPException:
         raise
     except TimeoutError:
