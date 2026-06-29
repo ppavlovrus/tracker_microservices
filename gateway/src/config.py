@@ -21,5 +21,12 @@ CACHE_TTL_TAGS: int = int(os.getenv("CACHE_TTL_TAGS", "300"))
 # invalidated, since a single write can land on any page.
 CACHE_TTL_TASKS_LIST: int = int(os.getenv("CACHE_TTL_TASKS_LIST", "20"))
 
+# Rate limiting settings (token-bucket, per client IP)
+RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+# Bucket capacity = max burst of requests allowed at once.
+RATE_LIMIT_CAPACITY: int = int(os.getenv("RATE_LIMIT_CAPACITY", "60"))
+# Refill rate in tokens per second = sustained allowed request rate.
+RATE_LIMIT_REFILL_RATE: float = float(os.getenv("RATE_LIMIT_REFILL_RATE", "10"))
+
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

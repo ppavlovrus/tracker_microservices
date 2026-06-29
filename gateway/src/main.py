@@ -3,7 +3,8 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from task_tracker_common.messaging import RabbitMQClient
 
@@ -15,8 +16,12 @@ from .config import (
     LOG_LEVEL,
     REDIS_URL,
     CACHE_ENABLED,
+    RATE_LIMIT_ENABLED,
+    RATE_LIMIT_CAPACITY,
+    RATE_LIMIT_REFILL_RATE,
 )
 from .cache import Cache
+from .ratelimit import RateLimiter
 from .api.routers import tasks, users, web, comments, tags, attachments
 
 # Setup logging
@@ -32,6 +37,17 @@ rabbitmq_client: RabbitMQClient = None
 # Redis cache instance
 cache: Cache = None
 
+# Redis-backed rate limiter instance
+rate_limiter: RateLimiter = None
+
+# Paths that bypass rate limiting (health checks, docs, static assets)
+RATE_LIMIT_EXEMPT = ("/health", "/docs", "/redoc", "/openapi.json")
+
+
+def _is_rate_limit_exempt(path: str) -> bool:
+    """Return True for paths that should never be rate limited."""
+    return path.startswith("/static") or path in RATE_LIMIT_EXEMPT
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,7 +56,7 @@ async def lifespan(app: FastAPI):
     
     Manages RabbitMQ connection lifecycle.
     """
-    global rabbitmq_client, cache
+    global rabbitmq_client, cache, rate_limiter
 
     # Startup
     logger.info("Starting Gateway service...")
@@ -59,6 +75,15 @@ async def lifespan(app: FastAPI):
         # Initialize Redis cache (best-effort, never blocks startup)
         cache = Cache(redis_url=REDIS_URL, enabled=CACHE_ENABLED)
         await cache.connect()
+
+        # Initialize rate limiter (best-effort, fails open)
+        rate_limiter = RateLimiter(
+            redis_url=REDIS_URL,
+            capacity=RATE_LIMIT_CAPACITY,
+            refill_rate=RATE_LIMIT_REFILL_RATE,
+            enabled=RATE_LIMIT_ENABLED,
+        )
+        await rate_limiter.connect()
 
         # Set client in routers
         tasks.set_rabbitmq_client(rabbitmq_client)
@@ -88,6 +113,8 @@ async def lifespan(app: FastAPI):
             await rabbitmq_client.close()
         if cache:
             await cache.close()
+        if rate_limiter:
+            await rate_limiter.close()
         logger.info("Gateway service stopped")
     except Exception as e:
         logger.error(f"Error during shutdown: {e}", exc_info=True)
@@ -100,6 +127,34 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan
 )
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Per-IP token-bucket rate limiting. Fails open if Redis is unavailable."""
+    if rate_limiter is None or _is_rate_limit_exempt(request.url.path):
+        return await call_next(request)
+
+    ip = request.client.host if request.client else "unknown"
+    allowed, remaining, retry_after = await rate_limiter.check(ip)
+
+    if not allowed:
+        logger.warning(f"Rate limit exceeded for {ip} on {request.url.path}")
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded"},
+            headers={
+                "Retry-After": str(max(1, int(retry_after) + 1)),
+                "X-RateLimit-Limit": str(rate_limiter.capacity),
+                "X-RateLimit-Remaining": "0",
+            },
+        )
+
+    response = await call_next(request)
+    response.headers["X-RateLimit-Limit"] = str(rate_limiter.capacity)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    return response
+
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
