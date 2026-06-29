@@ -137,16 +137,31 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   gateway:
     build:
       context: .
       dockerfile: gateway/Dockerfile
     environment:
       - AMQP_URL=amqp://guest:guest@rabbitmq/
+      - REDIS_URL=redis://redis:6379/0
     ports:
       - "8000:8000"
     depends_on:
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       tasks:
         condition: service_started
@@ -154,5 +169,6 @@ services:
 volumes:
   pgdata:
   miniodata:
+  redisdata:
 
 

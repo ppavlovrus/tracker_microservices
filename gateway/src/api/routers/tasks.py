@@ -4,7 +4,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query
 from typing import Annotated
 
-from ...config import RPC_TIMEOUT
+from ...config import RPC_TIMEOUT, CACHE_TTL_TASK
 from ..schemas.task import (
     TaskCreate,
     TaskUpdate,
@@ -20,11 +20,25 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 # Global RabbitMQ client (will be set in main.py lifespan)
 rabbitmq_client = None
 
+# Global cache instance (will be set in main.py lifespan)
+cache = None
+
 
 def set_rabbitmq_client(client):
     """Set RabbitMQ client instance."""
     global rabbitmq_client
     rabbitmq_client = client
+
+
+def set_cache(c):
+    """Set cache instance."""
+    global cache
+    cache = c
+
+
+def _task_key(task_id: int) -> str:
+    """Cache key for a single task."""
+    return f"task:{task_id}"
 
 
 @router.post("", response_model=TaskResponse, status_code=201)
@@ -77,9 +91,16 @@ async def get_task(task_id: int) -> TaskResponse:
     """
     if not rabbitmq_client:
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
-    
+
+    # Cache-aside: try the cache first
+    if cache:
+        cached = await cache.get_json(_task_key(task_id))
+        if cached is not None:
+            logger.debug(f"Cache HIT for task {task_id}")
+            return TaskResponse(**cached)
+
     try:
-        # Send RPC command to Tasks service
+        # Cache miss -> send RPC command to Tasks service
         response = await rabbitmq_client.call(
             queue_name="tasks.commands",
             message={
@@ -88,15 +109,23 @@ async def get_task(task_id: int) -> TaskResponse:
             },
             timeout=RPC_TIMEOUT
         )
-        
+
         # Check response
         if not response.get("success"):
             error_msg = response.get("error", "Task not found")
             logger.warning(f"Task {task_id} not found")
             raise HTTPException(status_code=404, detail=error_msg)
-        
-        logger.debug(f"Task {task_id} retrieved successfully")
-        return TaskResponse(**response["data"])
+
+        result = TaskResponse(**response["data"])
+
+        # Populate the cache for next time
+        if cache:
+            await cache.set_json(
+                _task_key(task_id), result.model_dump(mode="json"), CACHE_TTL_TASK
+            )
+
+        logger.debug(f"Cache MISS for task {task_id}, served from RPC")
+        return result
         
     except HTTPException:
         raise
@@ -197,7 +226,11 @@ async def update_task(task_id: int, task: TaskUpdate) -> TaskResponse:
             error_msg = response.get("error", "Task not found")
             logger.warning(f"Failed to update task {task_id}: {error_msg}")
             raise HTTPException(status_code=404, detail=error_msg)
-        
+
+        # Invalidate the cached task so the next GET re-fetches fresh data
+        if cache:
+            await cache.delete(_task_key(task_id))
+
         logger.info(f"Task {task_id} updated successfully")
         return TaskResponse(**response["data"])
         
@@ -240,7 +273,11 @@ async def delete_task(task_id: int) -> None:
             error_msg = response.get("error", "Task not found")
             logger.warning(f"Failed to delete task {task_id}: {error_msg}")
             raise HTTPException(status_code=404, detail=error_msg)
-        
+
+        # Invalidate the cached task
+        if cache:
+            await cache.delete(_task_key(task_id))
+
         logger.info(f"Task {task_id} deleted successfully")
         
     except HTTPException:

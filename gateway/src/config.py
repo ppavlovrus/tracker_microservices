@@ -12,5 +12,11 @@ SERVICE_NAME: str = "gateway"
 HOST: str = os.getenv("HOST", "0.0.0.0")
 PORT: int = int(os.getenv("PORT", "8000"))
 
+# Redis cache settings
+REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+CACHE_ENABLED: bool = os.getenv("CACHE_ENABLED", "true").lower() == "true"
+CACHE_TTL_TASK: int = int(os.getenv("CACHE_TTL_TASK", "60"))
+CACHE_TTL_TAGS: int = int(os.getenv("CACHE_TTL_TAGS", "300"))
+
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
