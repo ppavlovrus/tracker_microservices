@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block title %}Главная - Task Tracker{% endblock %}
+
+{% block content %}
+<div class="hero">
+    <h2>Добро пожаловать в Task Tracker!</h2>
+    <p>Микросервисная система управления задачами</p>
+</div>
+
+<div class="cards">
+    <div class="card">
+        <h3>📝 Задачи</h3>
+        <p>Создавайте, редактируйте и отслеживайте задачи</p>
+        <a href="/web/tasks" class="btn btn-primary">Перейти к задачам</a>
+    </div>
+
+    <div class="card">
+        <h3>📚 API</h3>
+        <p>Документация REST API</p>
+        <a href="/docs" target="_blank" class="btn btn-secondary">Открыть документацию</a>
+    </div>
+</div>
+
+<div class="stats">
+    <h3>Статистика системы</h3>
+    <div class="stats-grid">
+        <div class="stat-item">
+            <div class="stat-value" id="total-tasks">-</div>
+            <div class="stat-label">Всего задач</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value" id="active-tasks">-</div>
+            <div class="stat-label">Активных задач</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Загрузка статистики по задачам (чтение публично).
+    async function loadStats() {
+        try {
+            const res = await fetch(`${API_BASE}/tasks`);
+            if (!res.ok) return;
+            const data = await res.json();
+            const tasks = data.tasks || [];
+            document.getElementById('total-tasks').textContent = data.total ?? tasks.length;
+            document.getElementById('active-tasks').textContent =
+                tasks.filter(t => t.status_id === 1).length;
+        } catch (error) {
+            console.error('Ошибка загрузки статистики:', error);
+        }
+    }
+
+    loadStats();
+</script>
+{% endblock %}

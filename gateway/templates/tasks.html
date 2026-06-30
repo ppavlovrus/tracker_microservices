@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block title %}Задачи - Task Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h2>Задачи</h2>
+    <button id="create-task-btn" class="btn btn-primary" style="display: none;" onclick="showCreateTaskModal()">+ Создать задачу</button>
+</div>
+
+<div class="filters">
+    <input type="text" id="search" placeholder="Поиск задач..." class="input">
+    <select id="status-filter" class="select" onchange="loadTasks()">
+        <option value="">Все статусы</option>
+        <option value="1">Новая</option>
+        <option value="2">В работе</option>
+        <option value="3">Завершена</option>
+    </select>
+</div>
+
+<div id="tasks-container" class="tasks-grid">
+    <div class="loading">Загрузка задач...</div>
+</div>
+
+<!-- Модальное окно создания задачи -->
+<div id="create-task-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeCreateTaskModal()">&times;</span>
+        <h3>Создать задачу</h3>
+        <form id="create-task-form" onsubmit="createTask(event)">
+            <div class="form-group">
+                <label for="title">Название *</label>
+                <input type="text" id="title" name="title" class="input" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="description">Описание</label>
+                <textarea id="description" name="description" class="textarea" rows="4"></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="status_id">Статус</label>
+                <select id="status_id" name="status_id" class="select">
+                    <option value="1">Новая</option>
+                    <option value="2">В работе</option>
+                    <option value="3">Завершена</option>
+                </select>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeCreateTaskModal()">Отмена</button>
+                <button type="submit" class="btn btn-primary">Создать</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Модальное окно редактирования задачи -->
+<div id="edit-task-modal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeEditTaskModal()">&times;</span>
+        <h3>Редактировать задачу</h3>
+        <form id="edit-task-form" onsubmit="updateTask(event)">
+            <input type="hidden" id="edit-task-id" name="task_id">
+            
+            <div class="form-group">
+                <label for="edit-title">Название *</label>
+                <input type="text" id="edit-title" name="title" class="input" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="edit-description">Описание</label>
+                <textarea id="edit-description" name="description" class="textarea" rows="4"></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="edit-status_id">Статус</label>
+                <select id="edit-status_id" name="status_id" class="select">
+                    <option value="1">Новая</option>
+                    <option value="2">В работе</option>
+                    <option value="3">Завершена</option>
+                </select>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeEditTaskModal()">Отмена</button>
+                <button type="submit" class="btn btn-primary">Сохранить</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/tasks.js"></script>
+{% endblock %}

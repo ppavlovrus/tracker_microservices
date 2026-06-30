@@ -73,6 +73,10 @@ async def create_task(task: TaskCreate) -> TaskResponse:
             logger.error(f"Failed to create task: {error_msg}")
             raise HTTPException(status_code=500, detail=error_msg)
         
+        # A new task can appear on any list page -> drop all cached pages.
+        if cache:
+            await cache.delete_pattern("tasks:list:*")
+
         logger.info(f"Task created successfully: {response['data'].get('id')}")
         return TaskResponse(**response["data"])
         
@@ -158,9 +162,9 @@ async def list_tasks(
     if not rabbitmq_client:
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
-    # Cache-aside: try the cache first. The list uses a short TTL and is not
-    # explicitly invalidated -- a single write can land on any page, so we let
-    # the page self-expire rather than track which keys went stale.
+    # Cache-aside with a short TTL. List pages are also invalidated on every
+    # task write (create/update/delete drop all `tasks:list:*` keys), so the UI
+    # sees changes immediately; the TTL is just a backstop.
     if cache:
         cached = await cache.get_json(_tasks_list_key(limit, offset))
         if cached is not None:
@@ -251,9 +255,10 @@ async def update_task(task_id: int, task: TaskUpdate) -> TaskResponse:
             logger.warning(f"Failed to update task {task_id}: {error_msg}")
             raise HTTPException(status_code=404, detail=error_msg)
 
-        # Invalidate the cached task so the next GET re-fetches fresh data
+        # Invalidate the cached task and all list pages so the next reads are fresh
         if cache:
             await cache.delete(_task_key(task_id))
+            await cache.delete_pattern("tasks:list:*")
 
         logger.info(f"Task {task_id} updated successfully")
         return TaskResponse(**response["data"])
@@ -298,9 +303,10 @@ async def delete_task(task_id: int) -> None:
             logger.warning(f"Failed to delete task {task_id}: {error_msg}")
             raise HTTPException(status_code=404, detail=error_msg)
 
-        # Invalidate the cached task
+        # Invalidate the cached task and all list pages
         if cache:
             await cache.delete(_task_key(task_id))
+            await cache.delete_pattern("tasks:list:*")
 
         logger.info(f"Task {task_id} deleted successfully")
         
