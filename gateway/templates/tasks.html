@@ -10,15 +10,9 @@
 
 <div class="filters">
     <input type="text" id="search" placeholder="Поиск задач..." class="input">
-    <select id="status-filter" class="select" onchange="loadTasks()">
-        <option value="">Все статусы</option>
-        <option value="1">Новая</option>
-        <option value="2">В работе</option>
-        <option value="3">Завершена</option>
-    </select>
 </div>
 
-<div id="tasks-container" class="tasks-grid">
+<div id="tasks-container" class="kanban-board">
     <div class="loading">Загрузка задач...</div>
 </div>
 

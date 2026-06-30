@@ -1,79 +1,116 @@
-// Управление задачами
+// Управление задачами (Kanban-доска)
 
 let allTasks = [];
+
+// Колонки доски = статусы задач. Порядок задаёт порядок колонок.
+const STATUSES = [
+    { id: 1, name: 'Новая' },
+    { id: 2, name: 'В работе' },
+    { id: 3, name: 'Завершена' },
+];
 
 // Загрузка задач
 async function loadTasks() {
     try {
-        const statusFilter = document.getElementById('status-filter')?.value;
         const searchQuery = document.getElementById('search')?.value.toLowerCase();
-        
-        const response = await fetch(`${API_BASE}/tasks`);
+
+        const response = await fetch(`${API_BASE}/tasks?limit=100`);
         if (!response.ok) throw new Error('Ошибка загрузки задач');
-        
+
         const data = await response.json();
         allTasks = data.tasks || [];
-        
-        // Фильтрация
+
+        // Поиск по названию/описанию (колонки сами фильтруют по статусу).
         let filteredTasks = allTasks;
-        
-        if (statusFilter) {
-            filteredTasks = filteredTasks.filter(t => t.status_id == statusFilter);
-        }
-        
         if (searchQuery) {
-            filteredTasks = filteredTasks.filter(t => 
+            filteredTasks = filteredTasks.filter(t =>
                 t.title.toLowerCase().includes(searchQuery) ||
                 (t.description && t.description.toLowerCase().includes(searchQuery))
             );
         }
-        
+
         displayTasks(filteredTasks);
     } catch (error) {
         handleApiError(error);
     }
 }
 
-// Отображение задач
+// Отрисовка Kanban-доски: по колонке на каждый статус.
 function displayTasks(tasks) {
     const container = document.getElementById('tasks-container');
-    
-    if (tasks.length === 0) {
-        container.innerHTML = '<div class="loading">Задачи не найдены</div>';
-        return;
-    }
-    
-    container.innerHTML = tasks.map(task => `
+    const loggedIn = !!window.currentUser;
+    container.className = 'kanban-board';
+
+    container.innerHTML = STATUSES.map(status => {
+        const colTasks = tasks.filter(t => t.status_id === status.id);
+        const cards = colTasks.length
+            ? colTasks.map(task => taskCardHtml(task, loggedIn)).join('')
+            : '<div class="kanban-empty">Нет задач</div>';
+        return `
+        <div class="kanban-column status-${status.id}">
+            <div class="kanban-column-header">
+                <span>${status.name}</span>
+                <span class="kanban-count">${colTasks.length}</span>
+            </div>
+            <div class="kanban-column-body">${cards}</div>
+        </div>`;
+    }).join('');
+}
+
+// HTML одной карточки задачи (с селектом смены статуса).
+function taskCardHtml(task, loggedIn) {
+    const options = STATUSES.map(s =>
+        `<option value="${s.id}" ${s.id === task.status_id ? 'selected' : ''}>${s.name}</option>`
+    ).join('');
+    return `
         <div class="task-card status-${task.status_id}">
             <h3 class="task-title">${escapeHtml(task.title)}</h3>
             <p class="task-description">${escapeHtml(task.description || 'Нет описания')}</p>
             <div class="task-meta">
                 <span>ID: ${task.id}</span>
-                <span>Автор: ${task.creator_id}</span>
-            </div>
-            <div class="task-meta">
-                <span class="task-status status-${task.status_id}">
-                    ${getStatusName(task.status_id)}
-                </span>
                 <span>${formatDate(task.created_at)}</span>
             </div>
-            ${window.currentUser ? `
+            <div class="task-control">
+                <label>Статус:</label>
+                <select class="select task-status-select"
+                        onchange="changeStatus(${task.id}, this.value)"
+                        ${loggedIn ? '' : 'disabled'}>
+                    ${options}
+                </select>
+            </div>
+            ${loggedIn ? `
             <div class="task-actions">
                 <button class="btn btn-sm btn-primary" onclick="editTask(${task.id})">Редактировать</button>
                 <button class="btn btn-sm btn-danger" onclick="deleteTask(${task.id})">Удалить</button>
             </div>` : ''}
-        </div>
-    `).join('');
+        </div>`;
 }
 
-// Получить название статуса
-function getStatusName(statusId) {
-    const statuses = {
-        1: 'Новая',
-        2: 'В работе',
-        3: 'Завершена'
-    };
-    return statuses[statusId] || 'Неизвестно';
+// Смена статуса задачи прямо с карточки (комбо-бокс).
+async function changeStatus(taskId, newStatusId) {
+    const task = allTasks.find(t => t.id === taskId);
+    if (task && task.status_id === parseInt(newStatusId)) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/tasks/${taskId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ status_id: parseInt(newStatusId) }),
+        });
+
+        if (response.status === 401) { redirectToLogin(); return; }
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Ошибка смены статуса');
+        }
+
+        showNotification('Статус обновлён');
+        loadTasks();
+    } catch (error) {
+        handleApiError(error);
+        loadTasks();  // re-sync the select with the actual server state
+    }
 }
 
 // Создание задачи
