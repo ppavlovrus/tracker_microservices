@@ -10,7 +10,12 @@ from ..schemas.task import (
     TaskUpdate,
     TaskResponse,
     TaskListResponse,
+    TaskTag,
+    TaskTagAdd,
 )
+
+# Queue of the tags service, used when resolving a tag by name.
+TAGS_QUEUE = "tags.commands"
 
 logger = logging.getLogger(__name__)
 
@@ -309,7 +314,7 @@ async def delete_task(task_id: int) -> None:
             await cache.delete_pattern("tasks:list:*")
 
         logger.info(f"Task {task_id} deleted successfully")
-        
+
     except HTTPException:
         raise
     except TimeoutError:
@@ -320,4 +325,101 @@ async def delete_task(task_id: int) -> None:
         )
     except Exception as e:
         logger.error(f"Error deleting task {task_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _resolve_tag_id(name: str) -> int:
+    """Return the id of the tag named ``name``, creating it if needed."""
+    existing = await rabbitmq_client.call(
+        queue_name=TAGS_QUEUE,
+        message={"command": "get_tag_by_name", "data": {"name": name}},
+        timeout=RPC_TIMEOUT,
+    )
+    if existing.get("success"):
+        return existing["data"]["id"]
+
+    created = await rabbitmq_client.call(
+        queue_name=TAGS_QUEUE,
+        message={"command": "create_tag", "data": {"name": name}},
+        timeout=RPC_TIMEOUT,
+    )
+    if not created.get("success"):
+        raise HTTPException(status_code=400, detail=created.get("error", "Failed to create tag"))
+    return created["data"]["id"]
+
+
+async def _invalidate_task_cache(task_id: int) -> None:
+    """Drop the cached task and all list pages after a tag change."""
+    if cache:
+        await cache.delete(_task_key(task_id))
+        await cache.delete_pattern("tasks:list:*")
+
+
+@router.post("/{task_id}/tags", response_model=list[TaskTag])
+async def add_task_tag(task_id: int, payload: TaskTagAdd) -> list[TaskTag]:
+    """Attach a tag (by name, created on demand) to a task."""
+    if not rabbitmq_client:
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Tag name must not be blank")
+
+    try:
+        tag_id = await _resolve_tag_id(name)
+
+        link = await rabbitmq_client.call(
+            queue_name="tasks.commands",
+            message={
+                "command": "add_task_tag",
+                "data": {"task_id": task_id, "tag_id": tag_id},
+            },
+            timeout=RPC_TIMEOUT,
+        )
+        if not link.get("success"):
+            error_msg = link.get("error", "Failed to add tag")
+            status = 404 if "not found" in error_msg.lower() else 400
+            raise HTTPException(status_code=status, detail=error_msg)
+
+        await _invalidate_task_cache(task_id)
+        return [TaskTag(**t) for t in link["data"]["tags"]]
+
+    except HTTPException:
+        raise
+    except TimeoutError:
+        logger.error("Timeout waiting for service response")
+        raise HTTPException(status_code=504, detail="Service timeout")
+    except Exception as e:
+        logger.error(f"Error adding tag to task {task_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{task_id}/tags/{tag_id}", response_model=list[TaskTag])
+async def remove_task_tag(task_id: int, tag_id: int) -> list[TaskTag]:
+    """Detach a tag from a task."""
+    if not rabbitmq_client:
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    try:
+        res = await rabbitmq_client.call(
+            queue_name="tasks.commands",
+            message={
+                "command": "remove_task_tag",
+                "data": {"task_id": task_id, "tag_id": tag_id},
+            },
+            timeout=RPC_TIMEOUT,
+        )
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=res.get("error", "Failed to remove tag"))
+
+        await _invalidate_task_cache(task_id)
+        return [TaskTag(**t) for t in res["data"]["tags"]]
+
+    except HTTPException:
+        raise
+    except TimeoutError:
+        logger.error("Timeout waiting for Tasks service response")
+        raise HTTPException(status_code=504, detail="Tasks service timeout")
+    except Exception as e:
+        logger.error(f"Error removing tag from task {task_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

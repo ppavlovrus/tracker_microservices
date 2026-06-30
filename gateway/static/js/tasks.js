@@ -62,6 +62,12 @@ function taskCardHtml(task, loggedIn) {
     const options = STATUSES.map(s =>
         `<option value="${s.id}" ${s.id === task.status_id ? 'selected' : ''}>${s.name}</option>`
     ).join('');
+    const tags = (task.tags || []).map(t => `
+        <span class="tag-chip">#${escapeHtml(t.name)}${loggedIn
+            ? `<button class="tag-remove" title="Убрать тег"
+                       onclick="removeTaskTag(${task.id}, ${t.id})">&times;</button>`
+            : ''}</span>`).join('');
+
     return `
         <div class="task-card status-${task.status_id}">
             <h3 class="task-title">${escapeHtml(task.title)}</h3>
@@ -69,6 +75,12 @@ function taskCardHtml(task, loggedIn) {
             <div class="task-meta">
                 <span>ID: ${task.id}</span>
                 <span>${formatDate(task.created_at)}</span>
+            </div>
+            <div class="task-tags">
+                ${tags}
+                ${loggedIn ? `
+                <input class="tag-input" list="tags-datalist" placeholder="+ тег"
+                       onkeydown="if(event.key==='Enter'){event.preventDefault();addTaskTag(${task.id}, this.value);this.value='';}">` : ''}
             </div>
             <div class="task-control">
                 <label>Статус:</label>
@@ -84,6 +96,66 @@ function taskCardHtml(task, loggedIn) {
                 <button class="btn btn-sm btn-danger" onclick="deleteTask(${task.id})">Удалить</button>
             </div>` : ''}
         </div>`;
+}
+
+// Добавить тег к задаче по имени (создаётся, если не существует).
+async function addTaskTag(taskId, name) {
+    name = (name || '').trim();
+    if (!name) return;
+    try {
+        const response = await fetch(`${API_BASE}/tasks/${taskId}/tags`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ name }),
+        });
+        if (response.status === 401) { redirectToLogin(); return; }
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Ошибка добавления тега');
+        }
+        await loadAllTags();  // a brand-new tag should appear in autocomplete
+        loadTasks();
+    } catch (error) {
+        handleApiError(error);
+    }
+}
+
+// Убрать тег с задачи.
+async function removeTaskTag(taskId, tagId) {
+    try {
+        const response = await fetch(`${API_BASE}/tasks/${taskId}/tags/${tagId}`, {
+            method: 'DELETE',
+            credentials: 'same-origin',
+        });
+        if (response.status === 401) { redirectToLogin(); return; }
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Ошибка удаления тега');
+        }
+        loadTasks();
+    } catch (error) {
+        handleApiError(error);
+    }
+}
+
+// Наполнить <datalist> существующими тегами (автокомплит поля «+ тег»).
+async function loadAllTags() {
+    try {
+        const res = await fetch(`${API_BASE}/tags?limit=100`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const datalist = document.getElementById('tags-datalist');
+        if (!datalist) return;
+        datalist.innerHTML = '';
+        (data.tags || []).forEach(t => {
+            const option = document.createElement('option');
+            option.value = t.name;  // set as property -> no injection
+            datalist.appendChild(option);
+        });
+    } catch (error) {
+        // autocomplete is optional, ignore failures
+    }
 }
 
 // Смена статуса задачи прямо с карточки (комбо-бокс).
@@ -268,5 +340,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadCurrentUser();
     const createBtn = document.getElementById('create-task-btn');
     if (createBtn && window.currentUser) createBtn.style.display = '';
+    loadAllTags();
     loadTasks();
 });

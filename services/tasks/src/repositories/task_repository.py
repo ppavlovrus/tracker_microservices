@@ -180,10 +180,60 @@ class TaskRepository:
     async def count_all(self) -> int:
         """
         Count total number of tasks.
-        
+
         Returns:
             Total count
         """
         async with self.pool.acquire() as conn:
             count = await conn.fetchval("SELECT COUNT(*) FROM task")
             return count or 0
+
+    async def add_tag(self, task_id: int, tag_id: int) -> None:
+        """Link a tag to a task (idempotent)."""
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO task_tag (task_id, tag_id)
+                VALUES ($1, $2)
+                ON CONFLICT DO NOTHING
+                """,
+                task_id, tag_id,
+            )
+
+    async def remove_tag(self, task_id: int, tag_id: int) -> bool:
+        """Unlink a tag from a task. Returns True if a row was removed."""
+        async with self.pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM task_tag WHERE task_id = $1 AND tag_id = $2",
+                task_id, tag_id,
+            )
+            return result.split()[-1] == "1"
+
+    async def get_tags_for_tasks(self, task_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:
+        """Return ``{task_id: [{id, name}, ...]}`` for the given task ids.
+
+        Done in a single query to avoid an N+1 when listing the board.
+        """
+        if not task_ids:
+            return {}
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT tt.task_id, t.id, t.name
+                FROM task_tag tt
+                JOIN tag t ON t.id = tt.tag_id
+                WHERE tt.task_id = ANY($1::int[])
+                ORDER BY t.name
+                """,
+                task_ids,
+            )
+        grouped: Dict[int, List[Dict[str, Any]]] = {}
+        for row in rows:
+            grouped.setdefault(row["task_id"], []).append(
+                {"id": row["id"], "name": row["name"]}
+            )
+        return grouped
+
+    async def get_tags_for_task(self, task_id: int) -> List[Dict[str, Any]]:
+        """Return the list of ``{id, name}`` tags linked to one task."""
+        return (await self.get_tags_for_tasks([task_id])).get(task_id, [])

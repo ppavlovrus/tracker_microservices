@@ -51,13 +51,15 @@ class TaskHandlers:
             if task.get("updated_at"):
                 task["updated_at"] = task["updated_at"].isoformat()
             
+            task["tags"] = await self.repository.get_tags_for_task(task["id"])
+
             logger.info(f"Task created successfully: ID={task['id']}")
-            
+
             return {
                 "success": True,
                 "data": task
             }
-            
+
         except Exception as e:
             logger.error(f"Error creating task: {e}", exc_info=True)
             return {
@@ -103,8 +105,10 @@ class TaskHandlers:
             if task.get("updated_at"):
                 task["updated_at"] = task["updated_at"].isoformat()
             
+            task["tags"] = await self.repository.get_tags_for_task(task_id)
+
             logger.debug(f"Task retrieved: ID={task_id}")
-            
+
             return {
                 "success": True,
                 "data": task
@@ -169,8 +173,10 @@ class TaskHandlers:
             if task.get("updated_at"):
                 task["updated_at"] = task["updated_at"].isoformat()
             
+            task["tags"] = await self.repository.get_tags_for_task(task_id)
+
             logger.info(f"Task updated successfully: ID={task_id}")
-            
+
             return {
                 "success": True,
                 "data": task
@@ -254,7 +260,12 @@ class TaskHandlers:
                     task["created_at"] = task["created_at"].isoformat()
                 if task.get("updated_at"):
                     task["updated_at"] = task["updated_at"].isoformat()
-            
+
+            # Attach tags to every task in one query (no N+1).
+            tags_map = await self.repository.get_tags_for_tasks([t["id"] for t in tasks])
+            for task in tasks:
+                task["tags"] = tags_map.get(task["id"], [])
+
             logger.debug(f"Listed {len(tasks)} tasks (total={total}, limit={limit}, offset={offset})")
             
             return {
@@ -272,3 +283,40 @@ class TaskHandlers:
                 "error": str(e),
                 "error_type": type(e).__name__
             }
+
+    async def handle_add_task_tag(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Link an existing tag to a task. Returns the task's updated tags."""
+        try:
+            task_id = data.get("task_id")
+            tag_id = data.get("tag_id")
+            if not task_id or not tag_id:
+                return {"success": False, "error": "task_id and tag_id are required"}
+
+            if not await self.repository.get_by_id(task_id):
+                return {"success": False, "error": "Task not found"}
+
+            await self.repository.add_tag(task_id, tag_id)
+            tags = await self.repository.get_tags_for_task(task_id)
+            logger.info(f"Tag {tag_id} linked to task {task_id}")
+            return {"success": True, "data": {"task_id": task_id, "tags": tags}}
+
+        except Exception as e:
+            logger.error(f"Error adding tag to task: {e}", exc_info=True)
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+    async def handle_remove_task_tag(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Unlink a tag from a task. Returns the task's updated tags."""
+        try:
+            task_id = data.get("task_id")
+            tag_id = data.get("tag_id")
+            if not task_id or not tag_id:
+                return {"success": False, "error": "task_id and tag_id are required"}
+
+            await self.repository.remove_tag(task_id, tag_id)
+            tags = await self.repository.get_tags_for_task(task_id)
+            logger.info(f"Tag {tag_id} unlinked from task {task_id}")
+            return {"success": True, "data": {"task_id": task_id, "tags": tags}}
+
+        except Exception as e:
+            logger.error(f"Error removing tag from task: {e}", exc_info=True)
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}

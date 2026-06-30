@@ -44,9 +44,22 @@ class TaskUpdate(BaseModel):
         return v
 
 
+class TaskTag(BaseModel):
+    """A tag linked to a task."""
+
+    id: int
+    name: str
+
+
+class TaskTagAdd(BaseModel):
+    """Request to add a tag to a task by name (created if it doesn't exist)."""
+
+    name: str = Field(..., min_length=1, max_length=100, description="Tag name")
+
+
 class TaskResponse(BaseModel):
     """Schema for task response."""
-    
+
     id: int
     title: str
     description: Optional[str] = None
@@ -56,6 +69,7 @@ class TaskResponse(BaseModel):
     deadline_end: Optional[date] = None
     created_at: datetime
     updated_at: datetime
+    tags: list[TaskTag] = []
 
 
 class TaskListResponse(BaseModel):
