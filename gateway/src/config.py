@@ -28,5 +28,8 @@ RATE_LIMIT_CAPACITY: int = int(os.getenv("RATE_LIMIT_CAPACITY", "60"))
 # Refill rate in tokens per second = sustained allowed request rate.
 RATE_LIMIT_REFILL_RATE: float = float(os.getenv("RATE_LIMIT_REFILL_RATE", "10"))
 
+# Metrics. When enabled, Prometheus metrics are exposed at GET /metrics.
+METRICS_ENABLED: bool = os.getenv("METRICS_ENABLED", "true").lower() == "true"
+
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

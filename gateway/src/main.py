@@ -19,9 +19,11 @@ from .config import (
     RATE_LIMIT_ENABLED,
     RATE_LIMIT_CAPACITY,
     RATE_LIMIT_REFILL_RATE,
+    METRICS_ENABLED,
 )
 from .cache import Cache
 from .ratelimit import RateLimiter
+from .metrics import build_instrumentator
 from .api.routers import tasks, users, web, comments, tags, attachments
 
 # Setup logging
@@ -40,8 +42,8 @@ cache: Cache = None
 # Redis-backed rate limiter instance
 rate_limiter: RateLimiter = None
 
-# Paths that bypass rate limiting (health checks, docs, static assets)
-RATE_LIMIT_EXEMPT = ("/health", "/docs", "/redoc", "/openapi.json")
+# Paths that bypass rate limiting (health checks, docs, metrics, static assets)
+RATE_LIMIT_EXEMPT = ("/health", "/docs", "/redoc", "/openapi.json", "/metrics")
 
 
 def _is_rate_limit_exempt(path: str) -> bool:
@@ -166,6 +168,14 @@ app.include_router(users.router)
 app.include_router(comments.router)
 app.include_router(tags.router)
 app.include_router(attachments.router)
+
+# Expose Prometheus metrics at /metrics. Instrumentation is wired last so its
+# middleware sits outermost and times every request -- including the 429s
+# produced by the rate-limit middleware above.
+if METRICS_ENABLED:
+    build_instrumentator().instrument(app).expose(
+        app, endpoint="/metrics", include_in_schema=False
+    )
 
 
 @app.get("/health")

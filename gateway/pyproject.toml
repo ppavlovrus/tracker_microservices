@@ -16,6 +16,7 @@ dependencies = [
     "aiofiles>=23.0.0",
     "python-multipart>=0.0.6",
     "redis>=5.0.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
 ]
 
 [project.optional-dependencies]

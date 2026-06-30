@@ -12,6 +12,8 @@ from typing import Any, Optional
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
 
+from .metrics import CACHE_REQUESTS
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,21 +60,31 @@ class Cache:
             self._client = None
 
     async def get_json(self, key: str) -> Optional[Any]:
-        """Return the cached value for ``key`` or None on miss/error."""
+        """Return the cached value for ``key`` or None on miss/error.
+
+        Records the outcome on ``gateway_cache_requests_total``. Lookups are
+        only counted while the cache is live -- a disabled cache short-circuits
+        before any metric so it does not skew the hit ratio.
+        """
         if self._client is None:
             return None
         try:
             raw = await self._client.get(key)
         except RedisError as e:
             logger.warning(f"Cache GET failed for {key}: {e}")
+            CACHE_REQUESTS.labels(result="error").inc()
             return None
         if raw is None:
+            CACHE_REQUESTS.labels(result="miss").inc()
             return None
         try:
-            return json.loads(raw)
+            value = json.loads(raw)
         except (ValueError, TypeError):
             logger.warning(f"Corrupt cache value for {key}, ignoring")
+            CACHE_REQUESTS.labels(result="error").inc()
             return None
+        CACHE_REQUESTS.labels(result="hit").inc()
+        return value
 
     async def set_json(self, key: str, value: Any, ttl: int) -> None:
         """Store ``value`` as JSON under ``key`` with a TTL in seconds."""

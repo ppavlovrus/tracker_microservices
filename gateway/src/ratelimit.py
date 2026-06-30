@@ -20,6 +20,8 @@ from typing import Optional, Tuple
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
 
+from .metrics import RATE_LIMIT_DECISIONS
+
 logger = logging.getLogger(__name__)
 
 # KEYS[1]            = bucket key (rl:<ip>)
@@ -122,6 +124,9 @@ class RateLimiter:
 
         Returns ``(allowed, remaining, retry_after_seconds)``. On any Redis
         error the request is allowed through (fail-open).
+
+        Decisions are recorded on ``gateway_rate_limit_decisions_total``. A
+        disabled limiter records nothing -- it is not making decisions.
         """
         if self._client is None:
             return True, self.capacity, 0.0
@@ -132,6 +137,11 @@ class RateLimiter:
             )
         except RedisError as e:
             logger.warning(f"Rate limit check failed for {ip}, allowing: {e}")
+            RATE_LIMIT_DECISIONS.labels(decision="failopen").inc()
             return True, self.capacity, 0.0
 
-        return bool(int(allowed)), int(float(tokens)), float(retry_after)
+        is_allowed = bool(int(allowed))
+        RATE_LIMIT_DECISIONS.labels(
+            decision="allowed" if is_allowed else "blocked"
+        ).inc()
+        return is_allowed, int(float(tokens)), float(retry_after)
