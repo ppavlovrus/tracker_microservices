@@ -159,6 +159,58 @@ class UserHandlers:
                 "error_type": type(e).__name__
             }
     
+    async def handle_get_user_by_username(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle get_user_by_username command (login lookup).
+
+        Returns the full user record including ``password_hash`` so the gateway
+        can verify the password. The gateway is responsible for never leaking
+        the hash back to clients.
+
+        Args:
+            data: Contains username
+
+        Returns:
+            Response with user data or error
+        """
+        try:
+            username = data.get("username")
+
+            if not username:
+                return {
+                    "success": False,
+                    "error": "Username is required"
+                }
+
+            user = await self.repository.get_by_username(username)
+
+            if not user:
+                return {
+                    "success": False,
+                    "error": "User not found"
+                }
+
+            # Convert timestamps to strings for JSON
+            if user.get("created_at"):
+                user["created_at"] = user["created_at"].isoformat()
+            if user.get("last_login"):
+                user["last_login"] = user["last_login"].isoformat()
+
+            logger.debug(f"User retrieved by username: {username}")
+
+            return {
+                "success": True,
+                "data": user
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting user by username: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+
     async def handle_update_user(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Handle update_user command.

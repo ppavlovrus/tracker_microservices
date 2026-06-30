@@ -20,11 +20,15 @@ from .config import (
     RATE_LIMIT_CAPACITY,
     RATE_LIMIT_REFILL_RATE,
     METRICS_ENABLED,
+    AUTH_ENABLED,
+    SESSION_TTL,
+    SESSION_COOKIE_NAME,
 )
 from .cache import Cache
 from .ratelimit import RateLimiter
+from .sessions import SessionStore
 from .metrics import build_instrumentator
-from .api.routers import tasks, users, web, comments, tags, attachments
+from .api.routers import tasks, users, web, comments, tags, attachments, auth
 
 # Setup logging
 logging.basicConfig(
@@ -42,13 +46,27 @@ cache: Cache = None
 # Redis-backed rate limiter instance
 rate_limiter: RateLimiter = None
 
+# Redis-backed session store instance
+session_store: SessionStore = None
+
 # Paths that bypass rate limiting (health checks, docs, metrics, static assets)
 RATE_LIMIT_EXEMPT = ("/health", "/docs", "/redoc", "/openapi.json", "/metrics")
+
+# HTTP methods that mutate state and therefore require authentication.
+WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+
+# Write paths that must stay open (the login/logout endpoints themselves).
+AUTH_EXEMPT_WRITE = ("/auth/login", "/auth/logout")
 
 
 def _is_rate_limit_exempt(path: str) -> bool:
     """Return True for paths that should never be rate limited."""
     return path.startswith("/static") or path in RATE_LIMIT_EXEMPT
+
+
+def _requires_auth(method: str, path: str) -> bool:
+    """Return True if the request is a state-changing call that needs a session."""
+    return method in WRITE_METHODS and path not in AUTH_EXEMPT_WRITE
 
 
 @asynccontextmanager
@@ -58,7 +76,7 @@ async def lifespan(app: FastAPI):
     
     Manages RabbitMQ connection lifecycle.
     """
-    global rabbitmq_client, cache, rate_limiter
+    global rabbitmq_client, cache, rate_limiter, session_store
 
     # Startup
     logger.info("Starting Gateway service...")
@@ -87,12 +105,23 @@ async def lifespan(app: FastAPI):
         )
         await rate_limiter.connect()
 
+        # Initialize session store (fails closed: a dead Redis blocks logins
+        # and authenticated writes rather than waving them through)
+        session_store = SessionStore(
+            redis_url=REDIS_URL,
+            ttl=SESSION_TTL,
+            enabled=AUTH_ENABLED,
+        )
+        await session_store.connect()
+
         # Set client in routers
         tasks.set_rabbitmq_client(rabbitmq_client)
         users.set_rabbitmq_client(rabbitmq_client)
         comments.set_rabbitmq_client(rabbitmq_client)
         tags.set_rabbitmq_client(rabbitmq_client)
         attachments.set_rabbitmq_client(rabbitmq_client)
+        auth.set_rabbitmq_client(rabbitmq_client)
+        auth.set_session_store(session_store)
 
         # Wire cache into the routers that use it
         tasks.set_cache(cache)
@@ -117,6 +146,8 @@ async def lifespan(app: FastAPI):
             await cache.close()
         if rate_limiter:
             await rate_limiter.close()
+        if session_store:
+            await session_store.close()
         logger.info("Gateway service stopped")
     except Exception as e:
         logger.error(f"Error during shutdown: {e}", exc_info=True)
@@ -158,6 +189,30 @@ async def rate_limit_middleware(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Require a valid session for state-changing requests.
+
+    Reads are public; POST/PUT/PATCH/DELETE need a session cookie (except the
+    login/logout endpoints). Fails closed: with the session store down, writes
+    are rejected rather than allowed.
+    """
+    if (
+        AUTH_ENABLED
+        and session_store is not None
+        and _requires_auth(request.method, request.url.path)
+    ):
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        user = await session_store.get(token) if token else None
+        if user is None:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Authentication required"},
+            )
+
+    return await call_next(request)
+
+
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -168,6 +223,7 @@ app.include_router(users.router)
 app.include_router(comments.router)
 app.include_router(tags.router)
 app.include_router(attachments.router)
+app.include_router(auth.router)
 
 # Expose Prometheus metrics at /metrics. Instrumentation is wired last so its
 # middleware sits outermost and times every request -- including the 429s

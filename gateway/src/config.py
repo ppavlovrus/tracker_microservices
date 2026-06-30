@@ -31,5 +31,14 @@ RATE_LIMIT_REFILL_RATE: float = float(os.getenv("RATE_LIMIT_REFILL_RATE", "10"))
 # Metrics. When enabled, Prometheus metrics are exposed at GET /metrics.
 METRICS_ENABLED: bool = os.getenv("METRICS_ENABLED", "true").lower() == "true"
 
+# Authentication (session cookie backed by Redis).
+# When enabled, write requests (POST/PUT/PATCH/DELETE) require a valid session.
+AUTH_ENABLED: bool = os.getenv("AUTH_ENABLED", "true").lower() == "true"
+# Session lifetime in seconds (also the Redis TTL). Default: 1 day.
+SESSION_TTL: int = int(os.getenv("SESSION_TTL", "86400"))
+SESSION_COOKIE_NAME: str = os.getenv("SESSION_COOKIE_NAME", "session")
+# Set the Secure flag on the session cookie (enable behind HTTPS).
+COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

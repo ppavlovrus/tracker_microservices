@@ -86,6 +86,9 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
         
         elif command == "get_user_by_email":
             return await user_handlers.handle_get_user_by_email(data)
+
+        elif command == "get_user_by_username":
+            return await user_handlers.handle_get_user_by_username(data)
         
         elif command == "update_user":
             return await user_handlers.handle_update_user(data)

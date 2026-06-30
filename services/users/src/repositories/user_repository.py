@@ -47,6 +47,37 @@ class UserRepository:
             logger.warning(f"User not found: ID={id}")
             return None
 
+    async def get_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """
+        Get user by username (used by the login flow).
+
+        Selects only columns that exist on the ``user`` table -- notably it
+        does NOT touch ``updated_at`` (the table has ``last_login`` instead),
+        so it is safe regardless of the date-column mismatch in the other
+        queries here.
+
+        Args:
+            username: Username to look up
+
+        Returns:
+            User data as dict (including ``password_hash``) or None if absent
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, username, email, password_hash,
+                       created_at, last_login
+                FROM "user"
+                WHERE username = $1
+                """,
+                username
+            )
+            if row:
+                logger.debug(f"User found by username: {username}")
+                return dict(row)
+
+            return None
+
     async def get_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """
         Get user by email.
