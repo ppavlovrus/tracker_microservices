@@ -61,5 +61,17 @@ OAUTH_STATE_TTL: int = int(os.getenv("OAUTH_STATE_TTL", "600"))
 # Timeout for outgoing HTTP calls to Yandex.
 OAUTH_HTTP_TIMEOUT: float = float(os.getenv("OAUTH_HTTP_TIMEOUT", "10.0"))
 
+# Chat (WebSocket + Redis pub/sub). One shared room; live delivery goes
+# through pub/sub so the chat survives scaling the gateway horizontally.
+CHAT_ENABLED: bool = os.getenv("CHAT_ENABLED", "true").lower() == "true"
+CHAT_CHANNEL: str = os.getenv("CHAT_CHANNEL", "chat:general")
+# How many recent messages are kept in Redis and replayed on connect.
+CHAT_HISTORY_SIZE: int = int(os.getenv("CHAT_HISTORY_SIZE", "50"))
+# Send a ping after this many seconds of silence from the client.
+CHAT_HEARTBEAT_INTERVAL: float = float(os.getenv("CHAT_HEARTBEAT_INTERVAL", "25"))
+# Close the connection after this many seconds without any client frame.
+CHAT_HEARTBEAT_TIMEOUT: float = float(os.getenv("CHAT_HEARTBEAT_TIMEOUT", "60"))
+CHAT_MAX_MESSAGE_LENGTH: int = int(os.getenv("CHAT_MAX_MESSAGE_LENGTH", "1000"))
+
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

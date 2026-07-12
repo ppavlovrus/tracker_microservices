@@ -163,6 +163,9 @@ services:
       - YANDEX_REDIRECT_URI=${YANDEX_REDIRECT_URI:-http://localhost:8000/auth/yandex/callback}
       - YANDEX_OAUTH_BASE_URL=${YANDEX_OAUTH_BASE_URL:-https://oauth.yandex.ru}
       - YANDEX_USERINFO_URL=${YANDEX_USERINFO_URL:-https://login.yandex.ru/info}
+      # Chat heartbeat knobs are overridable so e2e can use short timeouts
+      - CHAT_HEARTBEAT_INTERVAL=${CHAT_HEARTBEAT_INTERVAL:-25}
+      - CHAT_HEARTBEAT_TIMEOUT=${CHAT_HEARTBEAT_TIMEOUT:-60}
     ports:
       - "8000:8000"
     depends_on:
