@@ -78,6 +78,94 @@ class UserRepository:
 
             return None
 
+    async def get_by_yandex_id(self, yandex_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get user by Yandex account id (OAuth login lookup).
+
+        Args:
+            yandex_id: Immutable Yandex account id
+
+        Returns:
+            User data as dict or None if not found
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT id, username, email, password_hash, yandex_id,
+                       created_at, last_login
+                FROM "user"
+                WHERE yandex_id = $1
+                """,
+                yandex_id
+            )
+            if row:
+                logger.debug(f"User found by yandex_id: {yandex_id}")
+                return dict(row)
+
+            return None
+
+    async def link_yandex_id(self, id: int, yandex_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Attach a Yandex account id to an existing user.
+
+        Args:
+            id: User ID
+            yandex_id: Yandex account id to link
+
+        Returns:
+            Updated user data or None if not found
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE "user"
+                SET yandex_id = $1
+                WHERE id = $2
+                RETURNING id, username, email, password_hash, yandex_id,
+                          created_at, last_login
+                """,
+                yandex_id,
+                id
+            )
+            if row:
+                logger.info(f"Yandex id linked: user ID={id}")
+                return dict(row)
+
+            logger.warning(f"User not found for yandex link: ID={id}")
+            return None
+
+    async def create_oauth(
+        self, username: str, email: str, yandex_id: str
+    ) -> Dict[str, Any]:
+        """
+        Create a user backed by Yandex OAuth (no local password).
+
+        Args:
+            username: Username (derived from the Yandex login)
+            email: Verified email from Yandex
+            yandex_id: Yandex account id
+
+        Returns:
+            Created user data
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO "user" (username, email, password_hash, yandex_id)
+                VALUES ($1, $2, NULL, $3)
+                RETURNING id, username, email, password_hash, yandex_id,
+                          created_at, last_login
+                """,
+                username,
+                email,
+                yandex_id
+            )
+
+            logger.info(
+                f"OAuth user created: ID={row['id']}, username='{row['username']}'"
+            )
+            return dict(row)
+
     async def get_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """
         Get user by email.
@@ -89,10 +177,12 @@ class UserRepository:
             User data as dict or None if not found
         """
         async with self.pool.acquire() as conn:
+            # The table has last_login, not updated_at (tech-debt #11); select
+            # only real columns so this lookup works at runtime.
             row = await conn.fetchrow(
                 """
-                SELECT id, username, email, password_hash,
-                       created_at, updated_at
+                SELECT id, username, email, password_hash, yandex_id,
+                       created_at, last_login
                 FROM "user"
                 WHERE email = $1
                 """,
@@ -101,7 +191,7 @@ class UserRepository:
             if row:
                 logger.debug(f"User found by email: {email}")
                 return dict(row)
-            
+
             return None
 
     async def create(self, data: Dict[str, Any]) -> Dict[str, Any]:

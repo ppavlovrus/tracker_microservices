@@ -157,6 +157,12 @@ services:
       - AMQP_URL=amqp://guest:guest@rabbitmq/
       - REDIS_URL=redis://redis:6379/0
       - METRICS_ENABLED=true
+      # Yandex OAuth credentials come from the root .env (never committed)
+      - YANDEX_CLIENT_ID=${YANDEX_CLIENT_ID:-}
+      - YANDEX_CLIENT_SECRET=${YANDEX_CLIENT_SECRET:-}
+      - YANDEX_REDIRECT_URI=${YANDEX_REDIRECT_URI:-http://localhost:8000/auth/yandex/callback}
+      - YANDEX_OAUTH_BASE_URL=${YANDEX_OAUTH_BASE_URL:-https://oauth.yandex.ru}
+      - YANDEX_USERINFO_URL=${YANDEX_USERINFO_URL:-https://login.yandex.ru/info}
     ports:
       - "8000:8000"
     depends_on:

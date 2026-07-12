@@ -21,6 +21,15 @@
             <button type="submit" class="btn btn-primary">Войти</button>
         </div>
     </form>
+    {% if yandex_oauth_enabled %}
+    <div style="margin-top: 1rem; text-align: center;">
+        <div style="color: #6b7280; font-size: 0.875rem; margin-bottom: 0.5rem;">или</div>
+        <a href="/auth/yandex/login" class="btn" id="yandex-login"
+           style="display: inline-block; background: #fc3f1d; color: #fff;">
+            Войти через Яндекс
+        </a>
+    </div>
+    {% endif %}
     <p style="margin-top: 1rem; color: #6b7280; font-size: 0.875rem;">
         По умолчанию: <code>admin</code> / <code>admin</code>
     </p>
@@ -29,8 +38,20 @@
 
 {% block scripts %}
 <script>
+    const OAUTH_ERRORS = {
+        state: 'Сессия входа устарела, попробуйте ещё раз',
+        declined: 'Вход через Яндекс отменён',
+        provider: 'Яндекс не ответил, попробуйте позже',
+        profile: 'Яндекс не предоставил email — вход невозможен',
+        internal: 'Внутренняя ошибка, попробуйте позже',
+    };
+
     // If already logged in, skip the form.
     document.addEventListener('DOMContentLoaded', async () => {
+        const oauthError = new URLSearchParams(window.location.search).get('oauth_error');
+        if (oauthError) {
+            handleApiError(new Error(OAUTH_ERRORS[oauthError] || 'Не удалось войти через Яндекс'));
+        }
         const user = await loadCurrentUser();
         if (user) window.location.href = '/web/tasks';
     });

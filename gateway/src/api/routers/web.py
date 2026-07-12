@@ -4,6 +4,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
+from ...config import YANDEX_OAUTH_ENABLED
+
 router = APIRouter(tags=["Web UI"])
 
 # Setup Jinja2 templates
@@ -19,7 +21,9 @@ async def index(request: Request):
 @router.get("/web/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     """Login page."""
-    return templates.TemplateResponse(request, "login.html")
+    return templates.TemplateResponse(
+        request, "login.html", {"yandex_oauth_enabled": YANDEX_OAUTH_ENABLED}
+    )
 
 
 @router.get("/web/tasks", response_class=HTMLResponse)

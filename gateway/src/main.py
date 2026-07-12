@@ -23,12 +23,14 @@ from .config import (
     AUTH_ENABLED,
     SESSION_TTL,
     SESSION_COOKIE_NAME,
+    YANDEX_OAUTH_ENABLED,
+    OAUTH_STATE_TTL,
 )
 from .cache import Cache
 from .ratelimit import RateLimiter
-from .sessions import SessionStore
+from .sessions import SessionStore, OAuthStateStore
 from .metrics import build_instrumentator
-from .api.routers import tasks, users, web, comments, tags, attachments, auth
+from .api.routers import tasks, users, web, comments, tags, attachments, auth, oauth
 
 # Setup logging
 logging.basicConfig(
@@ -48,6 +50,9 @@ rate_limiter: RateLimiter = None
 
 # Redis-backed session store instance
 session_store: SessionStore = None
+
+# Redis-backed one-time state tokens for the OAuth flow
+oauth_state_store: OAuthStateStore = None
 
 # Paths that bypass rate limiting (health checks, docs, metrics, static assets)
 RATE_LIMIT_EXEMPT = ("/health", "/docs", "/redoc", "/openapi.json", "/metrics")
@@ -76,7 +81,7 @@ async def lifespan(app: FastAPI):
     
     Manages RabbitMQ connection lifecycle.
     """
-    global rabbitmq_client, cache, rate_limiter, session_store
+    global rabbitmq_client, cache, rate_limiter, session_store, oauth_state_store
 
     # Startup
     logger.info("Starting Gateway service...")
@@ -123,6 +128,16 @@ async def lifespan(app: FastAPI):
         auth.set_rabbitmq_client(rabbitmq_client)
         auth.set_session_store(session_store)
 
+        # Yandex OAuth needs its own one-time state tokens (CSRF protection)
+        if YANDEX_OAUTH_ENABLED:
+            oauth_state_store = OAuthStateStore(
+                redis_url=REDIS_URL, ttl=OAUTH_STATE_TTL
+            )
+            await oauth_state_store.connect()
+            oauth.set_rabbitmq_client(rabbitmq_client)
+            oauth.set_session_store(session_store)
+            oauth.set_state_store(oauth_state_store)
+
         # Wire cache into the routers that use it
         tasks.set_cache(cache)
         tags.set_cache(cache)
@@ -148,6 +163,8 @@ async def lifespan(app: FastAPI):
             await rate_limiter.close()
         if session_store:
             await session_store.close()
+        if oauth_state_store:
+            await oauth_state_store.close()
         logger.info("Gateway service stopped")
     except Exception as e:
         logger.error(f"Error during shutdown: {e}", exc_info=True)
@@ -224,6 +241,7 @@ app.include_router(comments.router)
 app.include_router(tags.router)
 app.include_router(attachments.router)
 app.include_router(auth.router)
+app.include_router(oauth.router)
 
 # Expose Prometheus metrics at /metrics. Instrumentation is wired last so its
 # middleware sits outermost and times every request -- including the 429s

@@ -3,9 +3,19 @@
 import logging
 from typing import Dict, Any
 
+import asyncpg
+
 from ..repositories.user_repository import UserRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _serialize_dates(user: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert timestamp fields to ISO strings for JSON serialization."""
+    for field in ("created_at", "updated_at", "last_login"):
+        if user.get(field):
+            user[field] = user[field].isoformat()
+    return user
 
 
 class UserHandlers:
@@ -205,6 +215,65 @@ class UserHandlers:
 
         except Exception as e:
             logger.error(f"Error getting user by username: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": type(e).__name__
+            }
+
+    async def handle_upsert_yandex_user(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle upsert_yandex_user command (Yandex OAuth login).
+
+        Resolution order:
+        1. A user already linked to this Yandex id -- return it.
+        2. A user with the same email -- link the Yandex id to it. Safe because
+           Yandex only reports emails it has verified itself.
+        3. Otherwise create a new user without a local password.
+
+        Args:
+            data: Contains yandex_id, email and login from the Yandex profile
+
+        Returns:
+            Response with the resolved user or error
+        """
+        try:
+            yandex_id = data.get("yandex_id")
+            email = data.get("email")
+            login = data.get("login")
+
+            if not yandex_id or not email or not login:
+                return {
+                    "success": False,
+                    "error": "yandex_id, email and login are required"
+                }
+
+            user = await self.repository.get_by_yandex_id(yandex_id)
+            if user:
+                logger.debug(f"OAuth login: existing user ID={user['id']}")
+                return {"success": True, "data": _serialize_dates(user)}
+
+            existing = await self.repository.get_by_email(email)
+            if existing:
+                user = await self.repository.link_yandex_id(existing["id"], yandex_id)
+                if user is None:
+                    return {"success": False, "error": "User not found"}
+                logger.info(f"OAuth login: linked yandex_id to user ID={user['id']}")
+                return {"success": True, "data": _serialize_dates(user)}
+
+            try:
+                user = await self.repository.create_oauth(login, email, yandex_id)
+            except asyncpg.UniqueViolationError:
+                # The Yandex login is taken as a local username; fall back to a
+                # deterministic unique name derived from the Yandex id.
+                fallback = f"{login}_ya{yandex_id}"[:64]
+                user = await self.repository.create_oauth(fallback, email, yandex_id)
+
+            logger.info(f"OAuth login: created user ID={user['id']}")
+            return {"success": True, "data": _serialize_dates(user)}
+
+        except Exception as e:
+            logger.error(f"Error upserting yandex user: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": str(e),
