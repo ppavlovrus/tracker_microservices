@@ -73,5 +73,18 @@ CHAT_HEARTBEAT_INTERVAL: float = float(os.getenv("CHAT_HEARTBEAT_INTERVAL", "25"
 CHAT_HEARTBEAT_TIMEOUT: float = float(os.getenv("CHAT_HEARTBEAT_TIMEOUT", "60"))
 CHAT_MAX_MESSAGE_LENGTH: int = int(os.getenv("CHAT_MAX_MESSAGE_LENGTH", "1000"))
 
+# SSE task notifications (Server-Sent Events + Redis pub/sub). Live task events
+# (created/updated/deleted) are pushed to connected browsers over a one-way
+# stream; delivery goes through pub/sub so it survives scaling the gateway.
+# Unlike the chat, events are ephemeral: nothing is replayed on connect.
+SSE_ENABLED: bool = os.getenv("SSE_ENABLED", "true").lower() == "true"
+SSE_CHANNEL: str = os.getenv("SSE_CHANNEL", "events:tasks")
+# Emit a keep-alive comment after this many seconds of silence so idle streams
+# stay open through proxies and disconnects are noticed promptly.
+SSE_HEARTBEAT_INTERVAL: float = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "25"))
+# Cap of pending events buffered per connection; a slow client is dropped
+# rather than allowed to grow memory without bound.
+SSE_MAX_QUEUE: int = int(os.getenv("SSE_MAX_QUEUE", "100"))
+
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

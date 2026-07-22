@@ -1,6 +1,7 @@
 """Tasks router for Gateway API."""
 
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Query
 from typing import Annotated
 
@@ -28,6 +29,9 @@ rabbitmq_client = None
 # Global cache instance (will be set in main.py lifespan)
 cache = None
 
+# Global events hub for SSE notifications (will be set in main.py lifespan)
+events_hub = None
+
 
 def set_rabbitmq_client(client):
     """Set RabbitMQ client instance."""
@@ -39,6 +43,28 @@ def set_cache(c):
     """Set cache instance."""
     global cache
     cache = c
+
+
+def set_events_hub(hub):
+    """Set events hub instance for SSE task notifications."""
+    global events_hub
+    events_hub = hub
+
+
+async def _publish_event(event_type: str, payload: dict) -> None:
+    """Best-effort SSE notification about a task change.
+
+    Never raised into the request: a failed notification must not fail the
+    write it describes.
+    """
+    if not events_hub:
+        return
+    event = {
+        "type": event_type,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        **payload,
+    }
+    await events_hub.publish(event)
 
 
 def _task_key(task_id: int) -> str:
@@ -82,8 +108,11 @@ async def create_task(task: TaskCreate) -> TaskResponse:
         if cache:
             await cache.delete_pattern("tasks:list:*")
 
+        created = TaskResponse(**response["data"])
+        await _publish_event("task.created", {"task": created.model_dump(mode="json")})
+
         logger.info(f"Task created successfully: {response['data'].get('id')}")
-        return TaskResponse(**response["data"])
+        return created
         
     except TimeoutError:
         logger.error("Timeout waiting for Tasks service response")
@@ -265,8 +294,11 @@ async def update_task(task_id: int, task: TaskUpdate) -> TaskResponse:
             await cache.delete(_task_key(task_id))
             await cache.delete_pattern("tasks:list:*")
 
+        updated = TaskResponse(**response["data"])
+        await _publish_event("task.updated", {"task": updated.model_dump(mode="json")})
+
         logger.info(f"Task {task_id} updated successfully")
-        return TaskResponse(**response["data"])
+        return updated
         
     except HTTPException:
         raise
@@ -312,6 +344,8 @@ async def delete_task(task_id: int) -> None:
         if cache:
             await cache.delete(_task_key(task_id))
             await cache.delete_pattern("tasks:list:*")
+
+        await _publish_event("task.deleted", {"id": task_id})
 
         logger.info(f"Task {task_id} deleted successfully")
 
@@ -382,6 +416,7 @@ async def add_task_tag(task_id: int, payload: TaskTagAdd) -> list[TaskTag]:
             raise HTTPException(status_code=status, detail=error_msg)
 
         await _invalidate_task_cache(task_id)
+        await _publish_event("task.updated", {"id": task_id})
         return [TaskTag(**t) for t in link["data"]["tags"]]
 
     except HTTPException:
@@ -413,6 +448,7 @@ async def remove_task_tag(task_id: int, tag_id: int) -> list[TaskTag]:
             raise HTTPException(status_code=400, detail=res.get("error", "Failed to remove tag"))
 
         await _invalidate_task_cache(task_id)
+        await _publish_event("task.updated", {"id": task_id})
         return [TaskTag(**t) for t in res["data"]["tags"]]
 
     except HTTPException:

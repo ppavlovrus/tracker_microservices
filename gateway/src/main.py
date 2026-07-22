@@ -29,14 +29,18 @@ from .config import (
     CHAT_ENABLED,
     CHAT_CHANNEL,
     CHAT_HISTORY_SIZE,
+    SSE_ENABLED,
+    SSE_CHANNEL,
+    SSE_MAX_QUEUE,
 )
 from .cache import Cache
 from .chat import ChatHub
+from .events import EventsHub
 from .ratelimit import RateLimiter
 from .sessions import SessionStore, OAuthStateStore
 from .metrics import build_instrumentator
 from .api.routers import (
-    tasks, users, web, comments, tags, attachments, auth, oauth, chat,
+    tasks, users, web, comments, tags, attachments, auth, oauth, chat, sse,
 )
 
 # Setup logging
@@ -64,6 +68,10 @@ oauth_state_store: OAuthStateStore = None
 # Chat hub (Redis pub/sub) and its background listener task
 chat_hub: ChatHub = None
 chat_listener_task: asyncio.Task = None
+
+# Task-events hub (Redis pub/sub) and its background listener task
+events_hub: EventsHub = None
+events_listener_task: asyncio.Task = None
 
 # Paths that bypass rate limiting (health checks, docs, metrics, static assets)
 RATE_LIMIT_EXEMPT = ("/health", "/docs", "/redoc", "/openapi.json", "/metrics")
@@ -94,6 +102,7 @@ async def lifespan(app: FastAPI):
     """
     global rabbitmq_client, cache, rate_limiter, session_store, oauth_state_store
     global chat_hub, chat_listener_task
+    global events_hub, events_listener_task
 
     # Startup
     logger.info("Starting Gateway service...")
@@ -163,6 +172,20 @@ async def lifespan(app: FastAPI):
             chat.set_chat_hub(chat_hub)
             chat.set_session_store(session_store)
 
+        # SSE task notifications: same pub/sub fan-out pattern as the chat,
+        # publishers are the tasks write routers.
+        if SSE_ENABLED:
+            events_hub = EventsHub(
+                redis_url=REDIS_URL,
+                channel=SSE_CHANNEL,
+                max_queue=SSE_MAX_QUEUE,
+            )
+            await events_hub.connect()
+            events_listener_task = asyncio.create_task(events_hub.run_listener())
+            sse.set_events_hub(events_hub)
+            sse.set_session_store(session_store)
+            tasks.set_events_hub(events_hub)
+
         # Wire cache into the routers that use it
         tasks.set_cache(cache)
         tags.set_cache(cache)
@@ -198,6 +221,14 @@ async def lifespan(app: FastAPI):
                 pass
         if chat_hub:
             await chat_hub.close()
+        if events_listener_task:
+            events_listener_task.cancel()
+            try:
+                await events_listener_task
+            except asyncio.CancelledError:
+                pass
+        if events_hub:
+            await events_hub.close()
         logger.info("Gateway service stopped")
     except Exception as e:
         logger.error(f"Error during shutdown: {e}", exc_info=True)
@@ -276,6 +307,7 @@ app.include_router(attachments.router)
 app.include_router(auth.router)
 app.include_router(oauth.router)
 app.include_router(chat.router)
+app.include_router(sse.router)
 
 # Expose Prometheus metrics at /metrics. Instrumentation is wired last so its
 # middleware sits outermost and times every request -- including the 429s
