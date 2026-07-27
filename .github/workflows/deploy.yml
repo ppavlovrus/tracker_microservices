@@ -1,0 +1,63 @@
+name: Deploy to homebuntu
+
+# Deploy the stack to the self-hosted homebuntu server on every push to main.
+# The runner lives on the server itself, so "deploy" == rebuild the compose stack
+# in place and smoke-test it. No SSH, no secrets, no public IP required.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Never run two deploys at once; cancel an in-flight one if a newer push lands.
+concurrency:
+  group: deploy-homebuntu
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, homebuntu]
+    # Fixed compose project name so named volumes (pgdata, miniodata, ...) stay
+    # stable regardless of which directory the job checks out into.
+    env:
+      COMPOSE_PROJECT_NAME: tracker_microservices
+      GW: http://localhost:8000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Build & (re)deploy stack
+        run: docker compose up -d --build --remove-orphans
+
+      - name: Wait for gateway to become healthy
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$GW/web/login" || true)
+            echo "attempt $i: /web/login -> $code"
+            if [ "$code" = "200" ]; then echo "gateway is up"; exit 0; fi
+            sleep 4
+          done
+          echo "gateway did not become healthy in time" >&2
+          docker compose ps
+          docker compose logs gateway --tail 50 --no-log-prefix || true
+          exit 1
+
+      - name: Smoke test endpoints
+        run: |
+          set -e
+          check() {
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$GW$1")
+            echo "  $1 -> $code (want $2)"
+            [ "$code" = "$2" ]
+          }
+          check /            200
+          check /web/login   200
+          check /metrics     200
+
+      - name: Report running services
+        if: always()
+        run: docker compose ps --format 'table {{.Service}}\t{{.Status}}'
