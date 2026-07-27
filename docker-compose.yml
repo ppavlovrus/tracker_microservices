@@ -1,6 +1,7 @@
 ---
 services:
   postgres:
+    restart: unless-stopped
     image:
       postgres:16
     environment:
@@ -16,6 +17,9 @@ services:
       retries: 5
 
   migrations:
+    # One-shot job: run migrations and exit 0. Must NOT auto-restart, otherwise
+    # it would loop forever and never satisfy service_completed_successfully.
+    restart: "no"
     build:
       context: .
       dockerfile: common/Dockerfile
@@ -27,6 +31,7 @@ services:
     depends_on: { postgres: { condition: service_healthy } }
 
   tasks:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/tasks/Dockerfile
@@ -43,6 +48,7 @@ services:
         condition: service_completed_successfully
 
   users:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/users/Dockerfile
@@ -59,6 +65,7 @@ services:
         condition: service_completed_successfully
 
   comments:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/comments/Dockerfile
@@ -75,6 +82,7 @@ services:
         condition: service_completed_successfully
 
   tags:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/tags/Dockerfile
@@ -91,6 +99,7 @@ services:
         condition: service_completed_successfully
 
   attachments:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: services/attachments/Dockerfile
@@ -114,6 +123,7 @@ services:
         condition: service_started
 
   minio:
+    restart: unless-stopped
     image: minio/minio
     command: server /data --console-address ":9001"
     environment:
@@ -126,6 +136,7 @@ services:
       - miniodata:/data
 
   rabbitmq:
+    restart: unless-stopped
     ports:
       - 15672:15672
       - 5672:5672
@@ -138,6 +149,7 @@ services:
       retries: 5
 
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     ports:
       - "6379:6379"
@@ -150,6 +162,7 @@ services:
       retries: 5
 
   gateway:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: gateway/Dockerfile
@@ -177,6 +190,7 @@ services:
         condition: service_started
 
   prometheus:
+    restart: unless-stopped
     image: prom/prometheus:v2.54.1
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -191,6 +205,7 @@ services:
         condition: service_started
 
   grafana:
+    restart: unless-stopped
     image: grafana/grafana:11.2.0
     environment:
       - GF_SECURITY_ADMIN_USER=admin
