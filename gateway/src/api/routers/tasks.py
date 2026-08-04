@@ -11,6 +11,7 @@ from ..schemas.task import (
     TaskUpdate,
     TaskResponse,
     TaskListResponse,
+    TaskStatsResponse,
     TaskTag,
     TaskTagAdd,
 )
@@ -122,6 +123,44 @@ async def create_task(task: TaskCreate) -> TaskResponse:
         )
     except Exception as e:
         logger.error(f"Error creating task: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/stats", response_model=TaskStatsResponse)
+async def task_stats() -> TaskStatsResponse:
+    """Return task counts per status for the Kanban column totals.
+
+    Declared before ``/{task_id}`` so "stats" is not parsed as a task id. Not
+    cached: it is a single-scan aggregate and must reflect writes immediately.
+    """
+    if not rabbitmq_client:
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+
+    try:
+        response = await rabbitmq_client.call(
+            queue_name="tasks.commands",
+            message={"command": "task_stats", "data": {}},
+            timeout=RPC_TIMEOUT,
+        )
+
+        if not response.get("success"):
+            error_msg = response.get("error", "Unknown error")
+            logger.error(f"Failed to get task stats: {error_msg}")
+            raise HTTPException(status_code=500, detail=error_msg)
+
+        data = response["data"]
+        # Worker returns {"total": n, "1": n, "2": n, ...}; split total out and
+        # coerce the per-status keys to ints for the typed response.
+        by_status = {int(k): v for k, v in data.items() if k != "total"}
+        return TaskStatsResponse(total=data["total"], by_status=by_status)
+
+    except HTTPException:
+        raise
+    except TimeoutError:
+        logger.error("Timeout waiting for Tasks service response")
+        raise HTTPException(status_code=504, detail="Tasks service timeout")
+    except Exception as e:
+        logger.error(f"Error getting task stats: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

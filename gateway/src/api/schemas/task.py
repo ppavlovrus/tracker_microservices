@@ -74,8 +74,19 @@ class TaskResponse(BaseModel):
 
 class TaskListResponse(BaseModel):
     """Schema for list of tasks response."""
-    
+
     tasks: list[TaskResponse]
     total: int
     limit: int
     offset: int
+
+
+class TaskStatsResponse(BaseModel):
+    """Task counts per status for the Kanban column totals.
+
+    ``by_status`` maps a status id to its task count; ``total`` is the count
+    across all statuses. Counts cover the whole table, not just one list page.
+    """
+
+    total: int
+    by_status: dict[int, int]

@@ -2,45 +2,82 @@
 
 from typing import Optional, List, Dict, Any
 from datetime import datetime
+import json
 import asyncpg
 import logging
 
 logger = logging.getLogger(__name__)
 
+# Columns selected for a task, aliased to the ``task`` table so they stay
+# unambiguous once we LEFT JOIN task_tag/tag to aggregate the tags.
+_TASK_COLUMNS = """
+    t.id, t.title, t.description, t.status_id, t.creator_id,
+    t.deadline_start, t.deadline_end, t.created_at, t.updated_at
+"""
+
+# Aggregate a task's tags into a JSON array in the same query (no N+1).
+#   - ORDER BY inside the aggregate -> stable tag order
+#   - FILTER (WHERE tg.id IS NOT NULL) -> a task with no tags yields [] and not
+#     [null], which a bare LEFT JOIN + json_agg would produce
+#   - COALESCE(..., '[]') -> json_agg returns NULL (not []) on an empty group
+_TAGS_AGG = """
+    COALESCE(
+        json_agg(json_build_object('id', tg.id, 'name', tg.name) ORDER BY tg.name)
+            FILTER (WHERE tg.id IS NOT NULL),
+        '[]'
+    ) AS tags
+"""
+
 
 class TaskRepository:
     """Repository for Task entity operations."""
-    
+
     def __init__(self, pool: asyncpg.Pool):
         """
         Initialize TaskRepository.
-        
+
         Args:
             pool: asyncpg connection pool
         """
         self.pool = pool
-    
+
+    @staticmethod
+    def _row_to_task(row: asyncpg.Record) -> Dict[str, Any]:
+        """Turn a task row into a dict, decoding the aggregated ``tags`` column.
+
+        asyncpg returns ``json`` columns as raw strings unless a type codec is
+        registered, so the ``json_agg`` result arrives as text and must be
+        parsed back into a list.
+        """
+        task = dict(row)
+        tags = task.get("tags")
+        if isinstance(tags, str):
+            task["tags"] = json.loads(tags)
+        return task
+
     async def get_by_id(self, task_id: int) -> Optional[Dict[str, Any]]:
         """
-        Get task by ID.
-        
+        Get task by ID, with its tags aggregated in the same query.
+
         Args:
             task_id: Task ID
-            
+
         Returns:
-            Task data as dict or None if not found
+            Task data (including a ``tags`` list) as dict or None if not found
         """
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                """
-                SELECT id, title, description, status_id, creator_id,
-                       deadline_start, deadline_end, created_at, updated_at
-                FROM task
-                WHERE id = $1
+                f"""
+                SELECT {_TASK_COLUMNS}, {_TAGS_AGG}
+                FROM task t
+                LEFT JOIN task_tag tt ON tt.task_id = t.id
+                LEFT JOIN tag tg ON tg.id = tt.tag_id
+                WHERE t.id = $1
+                GROUP BY t.id
                 """,
                 task_id
             )
-            return dict(row) if row else None
+            return self._row_to_task(row) if row else None
     
     async def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -165,18 +202,20 @@ class TaskRepository:
         """
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                """
-                SELECT id, title, description, status_id, creator_id,
-                       deadline_start, deadline_end, created_at, updated_at
-                FROM task
-                ORDER BY created_at DESC
+                f"""
+                SELECT {_TASK_COLUMNS}, {_TAGS_AGG}
+                FROM task t
+                LEFT JOIN task_tag tt ON tt.task_id = t.id
+                LEFT JOIN tag tg ON tg.id = tt.tag_id
+                GROUP BY t.id
+                ORDER BY t.created_at DESC
                 LIMIT $1 OFFSET $2
                 """,
                 limit,
                 offset
             )
-            return [dict(row) for row in rows]
-    
+            return [self._row_to_task(row) for row in rows]
+
     async def count_all(self) -> int:
         """
         Count total number of tasks.
@@ -187,6 +226,35 @@ class TaskRepository:
         async with self.pool.acquire() as conn:
             count = await conn.fetchval("SELECT COUNT(*) FROM task")
             return count or 0
+
+    async def count_by_status(self) -> Dict[str, int]:
+        """Count tasks per status in a single pass using conditional aggregates.
+
+        ``FILTER (WHERE ...)`` scopes each ``count`` to one status while the
+        query still scans the table only once — unlike WHERE, which would need a
+        separate query per status. Counts cover the whole table, so the Kanban
+        column totals stay correct regardless of list pagination.
+
+        Returns a dict keyed by status id (as string, for JSON transport) plus a
+        ``total`` key.
+        """
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    count(*)                              AS total,
+                    count(*) FILTER (WHERE status_id = 1) AS status_1,
+                    count(*) FILTER (WHERE status_id = 2) AS status_2,
+                    count(*) FILTER (WHERE status_id = 3) AS status_3
+                FROM task
+                """
+            )
+            return {
+                "total": row["total"],
+                "1": row["status_1"],
+                "2": row["status_2"],
+                "3": row["status_3"],
+            }
 
     async def add_tag(self, task_id: int, tag_id: int) -> None:
         """Link a tag to a task (idempotent)."""

@@ -50,8 +50,9 @@ class TaskHandlers:
                 task["created_at"] = task["created_at"].isoformat()
             if task.get("updated_at"):
                 task["updated_at"] = task["updated_at"].isoformat()
-            
-            task["tags"] = await self.repository.get_tags_for_task(task["id"])
+
+            # A freshly created task has no tags yet.
+            task["tags"] = []
 
             logger.info(f"Task created successfully: ID={task['id']}")
 
@@ -104,8 +105,8 @@ class TaskHandlers:
                 task["created_at"] = task["created_at"].isoformat()
             if task.get("updated_at"):
                 task["updated_at"] = task["updated_at"].isoformat()
-            
-            task["tags"] = await self.repository.get_tags_for_task(task_id)
+
+            # Tags are already aggregated into the task by get_by_id().
 
             logger.debug(f"Task retrieved: ID={task_id}")
 
@@ -261,10 +262,7 @@ class TaskHandlers:
                 if task.get("updated_at"):
                     task["updated_at"] = task["updated_at"].isoformat()
 
-            # Attach tags to every task in one query (no N+1).
-            tags_map = await self.repository.get_tags_for_tasks([t["id"] for t in tasks])
-            for task in tasks:
-                task["tags"] = tags_map.get(task["id"], [])
+            # Tags are already aggregated into each task by get_all().
 
             logger.debug(f"Listed {len(tasks)} tasks (total={total}, limit={limit}, offset={offset})")
             
@@ -283,6 +281,17 @@ class TaskHandlers:
                 "error": str(e),
                 "error_type": type(e).__name__
             }
+
+    async def handle_task_stats(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Return task counts per status (for the Kanban column totals)."""
+        try:
+            counts = await self.repository.count_by_status()
+            logger.debug(f"Task stats: {counts}")
+            return {"success": True, "data": counts}
+
+        except Exception as e:
+            logger.error(f"Error computing task stats: {e}", exc_info=True)
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
 
     async def handle_add_task_tag(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Link an existing tag to a task. Returns the task's updated tags."""

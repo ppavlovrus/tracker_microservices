@@ -1,6 +1,14 @@
 // Управление задачами (Kanban-доска)
 
 let allTasks = [];
+// Task counts per status across the whole table (from GET /tasks/stats),
+// so column totals stay correct even when the board shows only one page.
+let statusCounts = {};
+
+// Board pagination over the whole task list (backend limit/offset).
+const PAGE_SIZE = 30;   // tasks fetched per board page
+let currentPage = 0;    // zero-based page index
+let totalTasks = 0;     // total tasks across all pages (from the list response)
 
 // Колонки доски = статусы задач. Порядок задаёт порядок колонок.
 const STATUSES = [
@@ -14,11 +22,25 @@ async function loadTasks() {
     try {
         const searchQuery = document.getElementById('search')?.value.toLowerCase();
 
-        const response = await fetch(`${API_BASE}/tasks?limit=100`);
+        const response = await fetch(
+            `${API_BASE}/tasks?limit=${PAGE_SIZE}&offset=${currentPage * PAGE_SIZE}`
+        );
         if (!response.ok) throw new Error('Ошибка загрузки задач');
 
         const data = await response.json();
         allTasks = data.tasks || [];
+        totalTasks = data.total || 0;
+
+        // If the current page fell out of range (e.g. tasks were deleted),
+        // clamp to the last page and reload it once.
+        const totalPages = Math.max(1, Math.ceil(totalTasks / PAGE_SIZE));
+        if (currentPage > totalPages - 1) {
+            currentPage = totalPages - 1;
+            return loadTasks();
+        }
+
+        // Refresh whole-table column totals alongside the page of tasks.
+        await loadStats();
 
         // Поиск по названию/описанию (колонки сами фильтруют по статусу).
         let filteredTasks = allTasks;
@@ -30,8 +52,52 @@ async function loadTasks() {
         }
 
         displayTasks(filteredTasks);
+        renderPagination();
     } catch (error) {
         handleApiError(error);
+    }
+}
+
+// Пагинация доски: кнопки ←/→ по всей ленте задач (limit/offset на бэкенде).
+function renderPagination() {
+    const container = document.getElementById('pagination');
+    if (!container) return;
+
+    // Клиентский поиск фильтрует только текущую страницу, поэтому при активном
+    // поиске листалка скрывается, чтобы не вводить в заблуждение.
+    const searching = !!document.getElementById('search')?.value.trim();
+    const totalPages = Math.max(1, Math.ceil(totalTasks / PAGE_SIZE));
+    if (searching || totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    const prevDisabled = currentPage <= 0 ? 'disabled' : '';
+    const nextDisabled = currentPage >= totalPages - 1 ? 'disabled' : '';
+    container.innerHTML = `
+        <button class="btn btn-sm" ${prevDisabled} onclick="goToPage(-1)">← Назад</button>
+        <span class="pagination-info">стр. ${currentPage + 1} / ${totalPages}</span>
+        <button class="btn btn-sm" ${nextDisabled} onclick="goToPage(1)">Вперёд →</button>`;
+}
+
+// Перейти на соседнюю страницу (delta = -1 | +1), с зажимом в границах.
+function goToPage(delta) {
+    const totalPages = Math.max(1, Math.ceil(totalTasks / PAGE_SIZE));
+    const next = currentPage + delta;
+    if (next < 0 || next > totalPages - 1) return;
+    currentPage = next;
+    loadTasks();
+}
+
+// Загрузка счётчиков колонок (по всей таблице, не по загруженной странице).
+async function loadStats() {
+    try {
+        const res = await fetch(`${API_BASE}/tasks/stats`);
+        if (!res.ok) return;  // counts are best-effort; fall back to page length
+        const data = await res.json();
+        statusCounts = data.by_status || {};
+    } catch (error) {
+        // stats are optional; leave the previous counts in place
     }
 }
 
@@ -41,8 +107,15 @@ function displayTasks(tasks) {
     const loggedIn = !!window.currentUser;
     container.className = 'kanban-board';
 
+    // While searching, the count reflects matches on screen; otherwise it is
+    // the whole-table total from /tasks/stats (falls back to page length).
+    const searching = !!document.getElementById('search')?.value.trim();
+
     container.innerHTML = STATUSES.map(status => {
         const colTasks = tasks.filter(t => t.status_id === status.id);
+        const count = searching
+            ? colTasks.length
+            : (statusCounts[status.id] ?? colTasks.length);
         const cards = colTasks.length
             ? colTasks.map(task => taskCardHtml(task, loggedIn)).join('')
             : '<div class="kanban-empty">Нет задач</div>';
@@ -50,7 +123,7 @@ function displayTasks(tasks) {
         <div class="kanban-column status-${status.id}">
             <div class="kanban-column-header">
                 <span>${status.name}</span>
-                <span class="kanban-count">${colTasks.length}</span>
+                <span class="kanban-count">${count}</span>
             </div>
             <div class="kanban-column-body">${cards}</div>
         </div>`;

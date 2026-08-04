@@ -19,6 +19,9 @@
     <div class="loading">Загрузка задач...</div>
 </div>
 
+<!-- Board pagination (prev/next over the whole task list) -->
+<div id="pagination" class="pagination"></div>
+
 <!-- Модальное окно создания задачи -->
 <div id="create-task-modal" class="modal">
     <div class="modal-content">
@@ -89,7 +92,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/tasks.js?v=3"></script>
+<script src="/static/js/tasks.js?v=4"></script>
 <script src="/static/js/chat.js?v=1"></script>
 <script src="/static/js/sse.js?v=1"></script>
 {% endblock %}

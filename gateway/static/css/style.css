@@ -596,3 +596,28 @@ footer {
         grid-template-columns: 1fr;
     }
 }
+
+/* Board pagination controls */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin: 1.5rem 0;
+}
+
+.pagination:empty {
+    display: none;
+}
+
+.pagination-info {
+    font-size: 0.875rem;
+    color: #6b7280;
+    min-width: 6rem;
+    text-align: center;
+}
+
+.pagination .btn[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

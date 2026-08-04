@@ -93,6 +93,9 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
         elif command == "list_tasks":
             return await task_handlers.handle_list_tasks(data)
 
+        elif command == "task_stats":
+            return await task_handlers.handle_task_stats(data)
+
         elif command == "add_task_tag":
             return await task_handlers.handle_add_task_tag(data)
 
