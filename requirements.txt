@@ -18,7 +18,6 @@
 -e ./gateway
 
 # Workers (RabbitMQ consumers).
--e ./services/auth
 -e ./services/attachments
 -e ./services/comments
 -e ./services/tags
