@@ -36,3 +36,10 @@ max-complexity = 12
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.uv.workspace]
+members = ["common", "gateway", "services/*"]
+
+[tool.uv.sources]
+task_tracker_common = { workspace = true }
+

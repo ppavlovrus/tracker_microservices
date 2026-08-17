@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gateway"
 version = "0.1.0"
+requires-python = ">=3.12"
 description = "API Gateway for Task Tracker microservices"
 dependencies = [
     "fastapi>=0.104.0",
