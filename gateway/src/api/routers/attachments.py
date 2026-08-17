@@ -1,14 +1,15 @@
 """Attachments router for Gateway API."""
 
 import logging
+
 from fastapi import APIRouter, HTTPException
 
 from ...config import RPC_TIMEOUT
 from ..schemas.attachment import (
     AttachmentCreate,
-    AttachmentResponse,
     AttachmentInitiateResponse,
     AttachmentListResponse,
+    AttachmentResponse,
 )
 
 logger = logging.getLogger(__name__)

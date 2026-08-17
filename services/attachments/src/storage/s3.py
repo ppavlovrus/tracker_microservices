@@ -87,9 +87,7 @@ class S3Storage:
                 logger.info(f"S3 bucket ready: {self.bucket}")
                 return
             except Exception as e:
-                logger.warning(
-                    f"S3 not ready (attempt {attempt}/{retries}): {e}"
-                )
+                logger.warning(f"S3 not ready (attempt {attempt}/{retries}): {e}")
                 await asyncio.sleep(delay)
         raise RuntimeError(f"S3 bucket '{self.bucket}' could not be ensured")
 

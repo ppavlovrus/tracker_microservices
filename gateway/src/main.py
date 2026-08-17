@@ -9,45 +9,51 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from task_tracker_common.messaging import RabbitMQClient
 
-from .config import (
-    AMQP_URL,
-    SERVICE_NAME,
-    HOST,
-    PORT,
-    LOG_LEVEL,
-    REDIS_URL,
-    CACHE_ENABLED,
-    RATE_LIMIT_ENABLED,
-    RATE_LIMIT_CAPACITY,
-    RATE_LIMIT_REFILL_RATE,
-    METRICS_ENABLED,
-    AUTH_ENABLED,
-    SESSION_TTL,
-    SESSION_COOKIE_NAME,
-    YANDEX_OAUTH_ENABLED,
-    OAUTH_STATE_TTL,
-    CHAT_ENABLED,
-    CHAT_CHANNEL,
-    CHAT_HISTORY_SIZE,
-    SSE_ENABLED,
-    SSE_CHANNEL,
-    SSE_MAX_QUEUE,
+from .api.routers import (
+    attachments,
+    auth,
+    chat,
+    comments,
+    oauth,
+    sse,
+    tags,
+    tasks,
+    users,
+    web,
 )
 from .cache import Cache
 from .chat import ChatHub
-from .events import EventsHub
-from .ratelimit import RateLimiter
-from .sessions import SessionStore, OAuthStateStore
-from .metrics import build_instrumentator
-from .api.routers import (
-    tasks, users, web, comments, tags, attachments, auth, oauth, chat, sse,
+from .config import (
+    AMQP_URL,
+    AUTH_ENABLED,
+    CACHE_ENABLED,
+    CHAT_CHANNEL,
+    CHAT_ENABLED,
+    CHAT_HISTORY_SIZE,
+    HOST,
+    LOG_LEVEL,
+    METRICS_ENABLED,
+    OAUTH_STATE_TTL,
+    PORT,
+    RATE_LIMIT_CAPACITY,
+    RATE_LIMIT_ENABLED,
+    RATE_LIMIT_REFILL_RATE,
+    REDIS_URL,
+    SERVICE_NAME,
+    SESSION_COOKIE_NAME,
+    SESSION_TTL,
+    SSE_CHANNEL,
+    SSE_ENABLED,
+    SSE_MAX_QUEUE,
+    YANDEX_OAUTH_ENABLED,
 )
+from .events import EventsHub
+from .metrics import build_instrumentator
+from .ratelimit import RateLimiter
+from .sessions import OAuthStateStore, SessionStore
 
 # Setup logging
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 # RabbitMQ client instance
@@ -97,7 +103,7 @@ def _requires_auth(method: str, path: str) -> bool:
 async def lifespan(app: FastAPI):
     """
     Lifespan context manager for FastAPI.
-    
+
     Manages RabbitMQ connection lifecycle.
     """
     global rabbitmq_client, cache, rate_limiter, session_store, oauth_state_store
@@ -109,10 +115,7 @@ async def lifespan(app: FastAPI):
 
     try:
         # Initialize RabbitMQ client
-        rabbitmq_client = RabbitMQClient(
-            amqp_url=AMQP_URL,
-            service_name=SERVICE_NAME
-        )
+        rabbitmq_client = RabbitMQClient(amqp_url=AMQP_URL, service_name=SERVICE_NAME)
 
         # Connect and setup RPC client
         await rabbitmq_client.connect()
@@ -151,9 +154,7 @@ async def lifespan(app: FastAPI):
 
         # Yandex OAuth needs its own one-time state tokens (CSRF protection)
         if YANDEX_OAUTH_ENABLED:
-            oauth_state_store = OAuthStateStore(
-                redis_url=REDIS_URL, ttl=OAUTH_STATE_TTL
-            )
+            oauth_state_store = OAuthStateStore(redis_url=REDIS_URL, ttl=OAUTH_STATE_TTL)
             await oauth_state_store.connect()
             oauth.set_rabbitmq_client(rabbitmq_client)
             oauth.set_session_store(session_store)
@@ -192,16 +193,16 @@ async def lifespan(app: FastAPI):
 
         logger.info("Gateway service started successfully")
         logger.info(f"RabbitMQ: {AMQP_URL}")
-        
+
     except Exception as e:
         logger.error(f"Failed to start Gateway: {e}", exc_info=True)
         raise
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down Gateway service...")
-    
+
     try:
         if rabbitmq_client:
             await rabbitmq_client.close()
@@ -239,7 +240,7 @@ app = FastAPI(
     title="Task Tracker Gateway",
     description="API Gateway for Task Tracker microservices",
     version="0.1.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 
@@ -278,11 +279,7 @@ async def auth_middleware(request: Request, call_next):
     login/logout endpoints). Fails closed: with the session store down, writes
     are rejected rather than allowed.
     """
-    if (
-        AUTH_ENABLED
-        and session_store is not None
-        and _requires_auth(request.method, request.url.path)
-    ):
+    if AUTH_ENABLED and session_store is not None and _requires_auth(request.method, request.url.path):
         token = request.cookies.get(SESSION_COOKIE_NAME)
         user = await session_store.get(token) if token else None
         if user is None:
@@ -313,29 +310,17 @@ app.include_router(sse.router)
 # middleware sits outermost and times every request -- including the 429s
 # produced by the rate-limit middleware above.
 if METRICS_ENABLED:
-    build_instrumentator().instrument(app).expose(
-        app, endpoint="/metrics", include_in_schema=False
-    )
+    build_instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "service": SERVICE_NAME,
-        "rabbitmq_connected": rabbitmq_client is not None
-    }
+    return {"status": "healthy", "service": SERVICE_NAME, "rabbitmq_connected": rabbitmq_client is not None}
 
 
 # Application entry point
 if __name__ == "__main__":
     import uvicorn
-    
-    uvicorn.run(
-        "src.main:app",
-        host=HOST,
-        port=PORT,
-        reload=True,
-        log_level=LOG_LEVEL.lower()
-    )
+
+    uvicorn.run("src.main:app", host=HOST, port=PORT, reload=True, log_level=LOG_LEVEL.lower())

@@ -1,19 +1,17 @@
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-
 from alembic import context
+from sqlalchemy import engine_from_config, pool
 from task_tracker_common.db.config import DATABASE_URL
-from task_tracker_common.db.models import Base
-from task_tracker_common.db.models import ( # noqa: F401
-    User,
+from task_tracker_common.db.models import (  # noqa: F401
+    Attachment,
     AuthSession,
-    TaskStatus,
+    Base,
+    Comment,
     Tag,
     Task,
-    Attachment,
-    Comment,
+    TaskStatus,
+    User,
 )
 
 # this is the Alembic Config object, which provides
@@ -77,9 +75,7 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

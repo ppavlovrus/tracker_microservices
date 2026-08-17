@@ -1,7 +1,7 @@
 """Attachment schemas for Gateway API."""
 
 from datetime import datetime
-from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -14,8 +14,8 @@ class AttachmentCreate(BaseModel):
 
     task_id: int = Field(..., description="Task the attachment belongs to")
     filename: str = Field(..., min_length=1, max_length=255, description="Original file name")
-    content_type: Optional[str] = Field(None, max_length=100, description="MIME type")
-    size_bytes: Optional[int] = Field(None, ge=0, description="File size in bytes")
+    content_type: str | None = Field(None, max_length=100, description="MIME type")
+    size_bytes: int | None = Field(None, ge=0, description="File size in bytes")
 
 
 class AttachmentResponse(BaseModel):
@@ -24,11 +24,11 @@ class AttachmentResponse(BaseModel):
     id: int
     task_id: int
     filename: str
-    content_type: Optional[str] = None
+    content_type: str | None = None
     storage_path: str
-    size_bytes: Optional[int] = None
+    size_bytes: int | None = None
     uploaded_at: datetime
-    download_url: Optional[str] = Field(None, description="Presigned URL to download the file")
+    download_url: str | None = Field(None, description="Presigned URL to download the file")
 
 
 class AttachmentInitiateResponse(AttachmentResponse):

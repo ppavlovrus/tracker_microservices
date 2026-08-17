@@ -14,7 +14,7 @@ deliver messages across instances.
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from fastapi import WebSocket
 from redis import asyncio as aioredis
@@ -33,8 +33,8 @@ class ChatHub:
         self._redis_url = redis_url
         self._channel = channel
         self._history_size = history_size
-        self._client: Optional[aioredis.Redis] = None
-        self._connections: Set[WebSocket] = set()
+        self._client: aioredis.Redis | None = None
+        self._connections: set[WebSocket] = set()
 
     @property
     def available(self) -> bool:
@@ -80,7 +80,7 @@ class ChatHub:
 
     # -- messages ----------------------------------------------------------
 
-    async def publish(self, message: Dict[str, Any]) -> bool:
+    async def publish(self, message: dict[str, Any]) -> bool:
         """Persist a message to history and broadcast it via pub/sub.
 
         The sender's own copy also arrives through pub/sub, which keeps
@@ -101,7 +101,7 @@ class ChatHub:
             return False
         return True
 
-    async def history(self) -> List[Dict[str, Any]]:
+    async def history(self) -> list[dict[str, Any]]:
         """Return the stored messages, oldest first. Best-effort."""
         if self._client is None:
             return []

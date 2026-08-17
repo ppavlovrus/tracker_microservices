@@ -1,7 +1,6 @@
 """Gateway configuration."""
 
 import os
-from typing import Optional
 
 # RabbitMQ settings
 AMQP_URL: str = os.getenv("AMQP_URL", "amqp://guest:guest@localhost/")
@@ -46,16 +45,10 @@ YANDEX_CLIENT_ID: str = os.getenv("YANDEX_CLIENT_ID", "")
 YANDEX_CLIENT_SECRET: str = os.getenv("YANDEX_CLIENT_SECRET", "")
 YANDEX_OAUTH_ENABLED: bool = bool(YANDEX_CLIENT_ID and YANDEX_CLIENT_SECRET)
 # Must match the Redirect URI registered with the Yandex app exactly.
-YANDEX_REDIRECT_URI: str = os.getenv(
-    "YANDEX_REDIRECT_URI", "http://localhost:8000/auth/yandex/callback"
-)
+YANDEX_REDIRECT_URI: str = os.getenv("YANDEX_REDIRECT_URI", "http://localhost:8000/auth/yandex/callback")
 # Yandex endpoints, overridable so e2e tests can point at a mock server.
-YANDEX_OAUTH_BASE_URL: str = os.getenv(
-    "YANDEX_OAUTH_BASE_URL", "https://oauth.yandex.ru"
-)
-YANDEX_USERINFO_URL: str = os.getenv(
-    "YANDEX_USERINFO_URL", "https://login.yandex.ru/info"
-)
+YANDEX_OAUTH_BASE_URL: str = os.getenv("YANDEX_OAUTH_BASE_URL", "https://oauth.yandex.ru")
+YANDEX_USERINFO_URL: str = os.getenv("YANDEX_USERINFO_URL", "https://login.yandex.ru/info")
 # Lifetime of the one-time state token guarding the flow against CSRF.
 OAUTH_STATE_TTL: int = int(os.getenv("OAUTH_STATE_TTL", "600"))
 # Timeout for outgoing HTTP calls to Yandex.

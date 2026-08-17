@@ -63,8 +63,10 @@ async def main() -> None:
     ok("unauthenticated connect rejected with 4401")
 
     # 2. Two clients: both get history on connect, message reaches both
-    async with websockets.connect(WS_URL, additional_headers=headers) as a, \
-            websockets.connect(WS_URL, additional_headers=headers) as b:
+    async with (
+        websockets.connect(WS_URL, additional_headers=headers) as a,
+        websockets.connect(WS_URL, additional_headers=headers) as b,
+    ):
         hist_a = await recv_frame(a, "history")
         hist_b = await recv_frame(b, "history")
         assert isinstance(hist_a["messages"], list)
@@ -99,7 +101,7 @@ async def main() -> None:
         except websockets.ConnectionClosed as e:
             assert got_ping, "connection closed before any ping was seen"
             assert e.rcvd.code == 1001, f"expected 1001, got {e.rcvd.code}"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise AssertionError("silent client was never disconnected")
     ok("silent client is pinged, then dropped on heartbeat timeout")
 

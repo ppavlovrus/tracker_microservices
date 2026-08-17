@@ -1,8 +1,8 @@
 """Task command handlers for RabbitMQ messages."""
 
 import logging
-from typing import Dict, Any
 from datetime import date
+from typing import Any
 
 from ..repositories.task_repository import TaskRepository
 
@@ -11,23 +11,23 @@ logger = logging.getLogger(__name__)
 
 class TaskHandlers:
     """Handlers for task-related commands."""
-    
+
     def __init__(self, repository: TaskRepository):
         """
         Initialize handlers.
-        
+
         Args:
             repository: TaskRepository instance
         """
         self.repository = repository
-    
-    async def handle_create_task(self, data: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def handle_create_task(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle create_task command.
-        
+
         Args:
             data: Task data from command
-            
+
         Returns:
             Response with created task or error
         """
@@ -37,10 +37,10 @@ class TaskHandlers:
                 data["deadline_start"] = date.fromisoformat(data["deadline_start"])
             if "deadline_end" in data and isinstance(data["deadline_end"], str):
                 data["deadline_end"] = date.fromisoformat(data["deadline_end"])
-            
+
             # Create task
             task = await self.repository.create(data)
-            
+
             # Convert dates back to strings for JSON serialization
             if task.get("deadline_start"):
                 task["deadline_start"] = task["deadline_start"].isoformat()
@@ -56,46 +56,33 @@ class TaskHandlers:
 
             logger.info(f"Task created successfully: ID={task['id']}")
 
-            return {
-                "success": True,
-                "data": task
-            }
+            return {"success": True, "data": task}
 
         except Exception as e:
             logger.error(f"Error creating task: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-    
-    async def handle_get_task(self, data: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+    async def handle_get_task(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle get_task command.
-        
+
         Args:
             data: Contains task ID
-            
+
         Returns:
             Response with task data or error
         """
         try:
             task_id = data.get("id")
-            
+
             if not task_id:
-                return {
-                    "success": False,
-                    "error": "Task ID is required"
-                }
-            
+                return {"success": False, "error": "Task ID is required"}
+
             task = await self.repository.get_by_id(task_id)
-            
+
             if not task:
-                return {
-                    "success": False,
-                    "error": "Task not found"
-                }
-            
+                return {"success": False, "error": "Task not found"}
+
             # Convert dates to strings for JSON
             if task.get("deadline_start"):
                 task["deadline_start"] = task["deadline_start"].isoformat()
@@ -110,60 +97,44 @@ class TaskHandlers:
 
             logger.debug(f"Task retrieved: ID={task_id}")
 
-            return {
-                "success": True,
-                "data": task
-            }
-            
+            return {"success": True, "data": task}
+
         except Exception as e:
             logger.error(f"Error getting task: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-    
-    async def handle_update_task(self, data: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+    async def handle_update_task(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle update_task command.
-        
+
         Args:
             data: Contains task ID and update fields
-            
+
         Returns:
             Response with updated task or error
         """
         try:
             task_id = data.get("id")
             update_data = data.get("update", {})
-            
+
             if not task_id:
-                return {
-                    "success": False,
-                    "error": "Task ID is required"
-                }
-            
+                return {"success": False, "error": "Task ID is required"}
+
             if not update_data:
-                return {
-                    "success": False,
-                    "error": "No fields to update"
-                }
-            
+                return {"success": False, "error": "No fields to update"}
+
             # Convert date strings to date objects if needed
             if "deadline_start" in update_data and isinstance(update_data["deadline_start"], str):
                 update_data["deadline_start"] = date.fromisoformat(update_data["deadline_start"])
             if "deadline_end" in update_data and isinstance(update_data["deadline_end"], str):
                 update_data["deadline_end"] = date.fromisoformat(update_data["deadline_end"])
-            
+
             # Update task
             task = await self.repository.update(task_id, update_data)
-            
+
             if not task:
-                return {
-                    "success": False,
-                    "error": "Task not found"
-                }
-            
+                return {"success": False, "error": "Task not found"}
+
             # Convert dates to strings for JSON
             if task.get("deadline_start"):
                 task["deadline_start"] = task["deadline_start"].isoformat()
@@ -173,84 +144,64 @@ class TaskHandlers:
                 task["created_at"] = task["created_at"].isoformat()
             if task.get("updated_at"):
                 task["updated_at"] = task["updated_at"].isoformat()
-            
+
             task["tags"] = await self.repository.get_tags_for_task(task_id)
 
             logger.info(f"Task updated successfully: ID={task_id}")
 
-            return {
-                "success": True,
-                "data": task
-            }
-            
+            return {"success": True, "data": task}
+
         except Exception as e:
             logger.error(f"Error updating task: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-    
-    async def handle_delete_task(self, data: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+    async def handle_delete_task(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle delete_task command.
-        
+
         Args:
             data: Contains task ID
-            
+
         Returns:
             Response indicating success or error
         """
         try:
             task_id = data.get("id")
-            
+
             if not task_id:
-                return {
-                    "success": False,
-                    "error": "Task ID is required"
-                }
-            
+                return {"success": False, "error": "Task ID is required"}
+
             deleted = await self.repository.delete(task_id)
-            
+
             if not deleted:
-                return {
-                    "success": False,
-                    "error": "Task not found"
-                }
-            
+                return {"success": False, "error": "Task not found"}
+
             logger.info(f"Task deleted successfully: ID={task_id}")
-            
-            return {
-                "success": True,
-                "data": {"deleted": True, "id": task_id}
-            }
-            
+
+            return {"success": True, "data": {"deleted": True, "id": task_id}}
+
         except Exception as e:
             logger.error(f"Error deleting task: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-    
-    async def handle_list_tasks(self, data: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+    async def handle_list_tasks(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle list_tasks command.
-        
+
         Args:
             data: Contains limit and offset
-            
+
         Returns:
             Response with list of tasks or error
         """
         try:
             limit = data.get("limit", 10)
             offset = data.get("offset", 0)
-            
+
             # Get tasks and total count
             tasks = await self.repository.get_all(limit=limit, offset=offset)
             total = await self.repository.count_all()
-            
+
             # Convert dates to strings for JSON
             for task in tasks:
                 if task.get("deadline_start"):
@@ -265,24 +216,14 @@ class TaskHandlers:
             # Tags are already aggregated into each task by get_all().
 
             logger.debug(f"Listed {len(tasks)} tasks (total={total}, limit={limit}, offset={offset})")
-            
-            return {
-                "success": True,
-                "data": {
-                    "tasks": tasks,
-                    "total": total
-                }
-            }
-            
+
+            return {"success": True, "data": {"tasks": tasks, "total": total}}
+
         except Exception as e:
             logger.error(f"Error listing tasks: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
 
-    async def handle_task_stats(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_task_stats(self, data: dict[str, Any]) -> dict[str, Any]:
         """Return task counts per status (for the Kanban column totals)."""
         try:
             counts = await self.repository.count_by_status()
@@ -293,7 +234,7 @@ class TaskHandlers:
             logger.error(f"Error computing task stats: {e}", exc_info=True)
             return {"success": False, "error": str(e), "error_type": type(e).__name__}
 
-    async def handle_add_task_tag(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_add_task_tag(self, data: dict[str, Any]) -> dict[str, Any]:
         """Link an existing tag to a task. Returns the task's updated tags."""
         try:
             task_id = data.get("task_id")
@@ -313,7 +254,7 @@ class TaskHandlers:
             logger.error(f"Error adding tag to task: {e}", exc_info=True)
             return {"success": False, "error": str(e), "error_type": type(e).__name__}
 
-    async def handle_remove_task_tag(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_remove_task_tag(self, data: dict[str, Any]) -> dict[str, Any]:
         """Unlink a tag from a task. Returns the task's updated tags."""
         try:
             task_id = data.get("task_id")

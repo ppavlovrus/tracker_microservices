@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import Optional, List
+
 
 class DomainRepository(ABC):
     @abstractmethod
-    async def get_by_id(self, id: int) -> Optional[object]:
+    async def get_by_id(self, id: int) -> object | None:
         pass
 
     @abstractmethod
@@ -19,6 +19,5 @@ class DomainRepository(ABC):
         pass
 
     @abstractmethod
-    async def get_all(self) -> List[object]:
+    async def get_all(self) -> list[object]:
         pass
-

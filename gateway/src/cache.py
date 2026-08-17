@@ -7,7 +7,7 @@ Redis must never take the gateway down with it.
 
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
@@ -27,7 +27,7 @@ class Cache:
     def __init__(self, redis_url: str, enabled: bool = True):
         self._redis_url = redis_url
         self._enabled = enabled
-        self._client: Optional[aioredis.Redis] = None
+        self._client: aioredis.Redis | None = None
 
     async def connect(self) -> None:
         """Open the connection and ping. On failure the cache stays disabled."""
@@ -59,7 +59,7 @@ class Cache:
             await self._client.aclose()
             self._client = None
 
-    async def get_json(self, key: str) -> Optional[Any]:
+    async def get_json(self, key: str) -> Any | None:
         """Return the cached value for ``key`` or None on miss/error.
 
         Records the outcome on ``gateway_cache_requests_total``. Lookups are

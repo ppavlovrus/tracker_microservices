@@ -1,14 +1,15 @@
 """Comments router for Gateway API."""
 
 import logging
+
 from fastapi import APIRouter, HTTPException
 
 from ...config import RPC_TIMEOUT
 from ..schemas.comment import (
     CommentCreate,
-    CommentUpdate,
-    CommentResponse,
     CommentListResponse,
+    CommentResponse,
+    CommentUpdate,
 )
 
 logger = logging.getLogger(__name__)

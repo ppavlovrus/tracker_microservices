@@ -44,14 +44,12 @@ class SSEListener(threading.Thread):
         super().__init__(daemon=True)
         self._base = base
         self._cookie = cookie
-        self.events: "queue.Queue[dict]" = queue.Queue()
+        self.events: queue.Queue[dict] = queue.Queue()
         self._stop = threading.Event()
         self.ready = threading.Event()
 
     def run(self) -> None:
-        req = urllib.request.Request(
-            f"{self._base}/sse/tasks", headers={"Cookie": self._cookie}
-        )
+        req = urllib.request.Request(f"{self._base}/sse/tasks", headers={"Cookie": self._cookie})
         resp = urllib.request.urlopen(req)
         ctype = resp.headers.get("Content-Type", "")
         assert ctype.startswith("text/event-stream"), f"bad content-type: {ctype}"
@@ -63,9 +61,9 @@ class SSEListener(threading.Thread):
                 break
             line = raw.decode().rstrip("\n")
             if line.startswith("event:"):
-                event_type = line[len("event:"):].strip()
+                event_type = line[len("event:") :].strip()
             elif line.startswith("data:"):
-                payload = json.loads(line[len("data:"):].strip())
+                payload = json.loads(line[len("data:") :].strip())
                 self.events.put({"type": event_type, "data": payload})
             elif line == "":
                 event_type = None  # end of one event block
@@ -140,16 +138,12 @@ def main() -> None:
 
     marker = f"e2e sse task {os.getpid()}"
     task_id = create_task(cookie, marker)
-    ev = listener.wait_for(
-        "task.created", lambda e: e["data"].get("task", {}).get("id") == task_id
-    )
+    ev = listener.wait_for("task.created", lambda e: e["data"].get("task", {}).get("id") == task_id)
     assert ev["data"]["task"]["title"] == marker
     ok("task.created delivered with the task payload")
 
     update_task(cookie, task_id, marker + " (upd)")
-    ev = listener.wait_for(
-        "task.updated", lambda e: e["data"].get("task", {}).get("id") == task_id
-    )
+    ev = listener.wait_for("task.updated", lambda e: e["data"].get("task", {}).get("id") == task_id)
     assert ev["data"]["task"]["title"] == marker + " (upd)"
     ok("task.updated delivered with the updated payload")
 
@@ -168,9 +162,7 @@ def main() -> None:
         assert other.ready.wait(timeout=5), "second SSE stream did not open"
         cross_marker = f"e2e sse cross {os.getpid()}"
         cross_id = create_task(cookie, cross_marker)
-        other.wait_for(
-            "task.created", lambda e: e["data"].get("task", {}).get("id") == cross_id
-        )
+        other.wait_for("task.created", lambda e: e["data"].get("task", {}).get("id") == cross_id)
         delete_task(cookie, cross_id)
         other.stop()
         ok("event published on gateway A reached a client on gateway B")

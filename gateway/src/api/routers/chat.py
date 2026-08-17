@@ -21,15 +21,15 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ...config import (
-    SESSION_COOKIE_NAME,
     CHAT_HEARTBEAT_INTERVAL,
     CHAT_HEARTBEAT_TIMEOUT,
     CHAT_MAX_MESSAGE_LENGTH,
+    SESSION_COOKIE_NAME,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def _build_message(user: dict, text: str) -> dict:
         "user_id": user["user_id"],
         "username": user["username"],
         "text": text,
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
     }
 
 
@@ -113,10 +113,8 @@ async def chat_websocket(websocket: WebSocket) -> None:
     try:
         while True:
             try:
-                raw = await asyncio.wait_for(
-                    websocket.receive_text(), timeout=CHAT_HEARTBEAT_INTERVAL
-                )
-            except asyncio.TimeoutError:
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=CHAT_HEARTBEAT_INTERVAL)
+            except TimeoutError:
                 # Silence. Either probe the peer or give up on it.
                 if time.monotonic() - last_seen > CHAT_HEARTBEAT_TIMEOUT:
                     logger.info(f"Chat heartbeat timeout: user={user['username']}")

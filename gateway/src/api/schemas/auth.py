@@ -1,7 +1,5 @@
 """Schemas for the auth endpoints."""
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -17,7 +15,7 @@ class UserPublic(BaseModel):
 
     id: int
     username: str
-    email: Optional[str] = None
+    email: str | None = None
 
 
 class LoginResponse(BaseModel):

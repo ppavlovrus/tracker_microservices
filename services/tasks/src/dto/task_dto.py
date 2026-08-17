@@ -1,13 +1,14 @@
-from pydantic import Field, BaseModel
 from enum import Enum
-from typing import Optional, List
-from datetime import date
+
+from pydantic import BaseModel, Field
+
 
 class TaskStatus(str, Enum):
     TO_DO = "TO_DO"
     IN_PROGRESS = "IN_PROGRESS"
     DONE = "DONE"
     CANCELLED = "CANCELLED"
+
 
 class Task(BaseModel):
     id: int
@@ -16,11 +17,9 @@ class Task(BaseModel):
     creator_id: int
     status: TaskStatus
 
-    deadline_start: Optional[str]
-    deadline_end: Optional[str]
+    deadline_start: str | None
+    deadline_end: str | None
 
-    assigned_to: Optional[int] = Field(int, ge=0)
-    attachments: Optional[list[str]] = Field(list[str])
-    tags: Optional[list[str]] = Field(list[str])
-
-
+    assigned_to: int | None = Field(int, ge=0)
+    attachments: list[str] | None = Field(list[str])
+    tags: list[str] | None = Field(list[str])

@@ -1,12 +1,14 @@
 from abc import ABC, abstractmethod
+
 from data_model import ModelRecord
+
 
 class BaseRepository(ABC):
     def __init__(self, pool):
         self.pool = pool
 
     @abstractmethod
-    async  def create(self, ModRecord: ModelRecord):
+    async def create(self, ModRecord: ModelRecord):
         pass
 
     @abstractmethod
@@ -24,4 +26,3 @@ class BaseRepository(ABC):
     @abstractmethod
     async def get_all(self) -> list[ModelRecord]:
         pass
-

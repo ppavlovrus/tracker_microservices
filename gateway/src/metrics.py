@@ -44,9 +44,7 @@ def build_instrumentator() -> Instrumentator:
         should_ignore_untemplated=True,
         excluded_handlers=["/metrics", "/health"],
     )
-    instrumentator.add(
-        metrics.requests(metric_name="gateway_http_requests_total")
-    )
+    instrumentator.add(metrics.requests(metric_name="gateway_http_requests_total"))
     instrumentator.add(
         metrics.latency(
             metric_name="gateway_http_request_duration_seconds",

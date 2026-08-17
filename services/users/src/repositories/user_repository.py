@@ -1,32 +1,33 @@
 """User repository for database operations."""
 
-from typing import Optional, List, Dict, Any
-from datetime import datetime
-import asyncpg
 import logging
+from datetime import datetime
+from typing import Any
+
+import asyncpg
 
 logger = logging.getLogger(__name__)
 
 
 class UserRepository:
     """Repository for User entity operations."""
-    
+
     def __init__(self, pool: asyncpg.Pool):
         """
         Initialize UserRepository.
-        
+
         Args:
             pool: asyncpg connection pool
         """
         self.pool = pool
-    
-    async def get_by_id(self, id: int) -> Optional[Dict[str, Any]]:
+
+    async def get_by_id(self, id: int) -> dict[str, Any] | None:
         """
         Get user by ID.
-        
+
         Args:
             id: User ID
-            
+
         Returns:
             User data as dict or None if not found
         """
@@ -38,16 +39,16 @@ class UserRepository:
                 FROM "user"
                 WHERE id = $1
                 """,
-                id
+                id,
             )
             if row:
                 logger.debug(f"User found: ID={id}")
                 return dict(row)
-            
+
             logger.warning(f"User not found: ID={id}")
             return None
 
-    async def get_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+    async def get_by_username(self, username: str) -> dict[str, Any] | None:
         """
         Get user by username (used by the login flow).
 
@@ -70,7 +71,7 @@ class UserRepository:
                 FROM "user"
                 WHERE username = $1
                 """,
-                username
+                username,
             )
             if row:
                 logger.debug(f"User found by username: {username}")
@@ -78,7 +79,7 @@ class UserRepository:
 
             return None
 
-    async def get_by_yandex_id(self, yandex_id: str) -> Optional[Dict[str, Any]]:
+    async def get_by_yandex_id(self, yandex_id: str) -> dict[str, Any] | None:
         """
         Get user by Yandex account id (OAuth login lookup).
 
@@ -96,7 +97,7 @@ class UserRepository:
                 FROM "user"
                 WHERE yandex_id = $1
                 """,
-                yandex_id
+                yandex_id,
             )
             if row:
                 logger.debug(f"User found by yandex_id: {yandex_id}")
@@ -104,7 +105,7 @@ class UserRepository:
 
             return None
 
-    async def link_yandex_id(self, id: int, yandex_id: str) -> Optional[Dict[str, Any]]:
+    async def link_yandex_id(self, id: int, yandex_id: str) -> dict[str, Any] | None:
         """
         Attach a Yandex account id to an existing user.
 
@@ -125,7 +126,7 @@ class UserRepository:
                           created_at, last_login
                 """,
                 yandex_id,
-                id
+                id,
             )
             if row:
                 logger.info(f"Yandex id linked: user ID={id}")
@@ -134,9 +135,7 @@ class UserRepository:
             logger.warning(f"User not found for yandex link: ID={id}")
             return None
 
-    async def create_oauth(
-        self, username: str, email: str, yandex_id: str
-    ) -> Dict[str, Any]:
+    async def create_oauth(self, username: str, email: str, yandex_id: str) -> dict[str, Any]:
         """
         Create a user backed by Yandex OAuth (no local password).
 
@@ -158,21 +157,19 @@ class UserRepository:
                 """,
                 username,
                 email,
-                yandex_id
+                yandex_id,
             )
 
-            logger.info(
-                f"OAuth user created: ID={row['id']}, username='{row['username']}'"
-            )
+            logger.info(f"OAuth user created: ID={row['id']}, username='{row['username']}'")
             return dict(row)
 
-    async def get_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+    async def get_by_email(self, email: str) -> dict[str, Any] | None:
         """
         Get user by email.
-        
+
         Args:
             email: User email
-            
+
         Returns:
             User data as dict or None if not found
         """
@@ -186,7 +183,7 @@ class UserRepository:
                 FROM "user"
                 WHERE email = $1
                 """,
-                email
+                email,
             )
             if row:
                 logger.debug(f"User found by email: {email}")
@@ -194,13 +191,13 @@ class UserRepository:
 
             return None
 
-    async def create(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def create(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Create new user.
-        
+
         Args:
             data: User data (username, email, password_hash)
-            
+
         Returns:
             Created user data
         """
@@ -214,20 +211,20 @@ class UserRepository:
                 """,
                 data["username"],
                 data["email"],
-                data["password_hash"]
+                data["password_hash"],
             )
-            
+
             logger.info(f"User created: ID={row['id']}, username='{row['username']}'")
             return dict(row)
 
-    async def update(self, id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def update(self, id: int, data: dict[str, Any]) -> dict[str, Any] | None:
         """
         Update user by ID.
-        
+
         Args:
             id: User ID
             data: Fields to update
-            
+
         Returns:
             Updated user data or None if not found
         """
@@ -235,77 +232,74 @@ class UserRepository:
         set_clauses = []
         values = []
         param_index = 1
-        
+
         for field in ["username", "email", "password_hash"]:
             if field in data:
                 set_clauses.append(f"{field} = ${param_index}")
                 values.append(data[field])
                 param_index += 1
-        
+
         if not set_clauses:
             # No fields to update, just return current user
             return await self.get_by_id(id)
-        
+
         # Add updated_at
         set_clauses.append(f"updated_at = ${param_index}")
         values.append(datetime.utcnow())
         param_index += 1
-        
+
         # Add id for WHERE clause
         values.append(id)
-        
+
         query = f"""
             UPDATE "user"
-            SET {', '.join(set_clauses)}
+            SET {", ".join(set_clauses)}
             WHERE id = ${param_index}
             RETURNING id, username, email, password_hash,
                       created_at, updated_at
         """
-        
+
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(query, *values)
-            
+
             if row:
                 logger.info(f"User updated: ID={id}")
                 return dict(row)
-            
+
             logger.warning(f"User not found for update: ID={id}")
             return None
 
     async def delete(self, id: int) -> bool:
         """
         Delete user by ID.
-        
+
         Args:
             id: User ID
-            
+
         Returns:
             True if deleted, False if not found
         """
         async with self.pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM \"user\" WHERE id = $1",
-                id
-            )
-            
+            result = await conn.execute('DELETE FROM "user" WHERE id = $1', id)
+
             # result is like "DELETE 1" or "DELETE 0"
             deleted = result.split()[-1] == "1"
-            
+
             if deleted:
                 logger.info(f"User deleted: ID={id}")
             else:
                 logger.warning(f"User not found for deletion: ID={id}")
-            
+
             return deleted
 
-    async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def get_all(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         """
         Get all users with pagination.
-        
+
         Args:
             limit: Maximum number of users to return
             offset: Number of users to skip
-            
+
         Returns:
             List of users
         """
@@ -319,17 +313,17 @@ class UserRepository:
                 LIMIT $1 OFFSET $2
                 """,
                 limit,
-                offset
+                offset,
             )
             return [dict(row) for row in rows]
-    
+
     async def count_all(self) -> int:
         """
         Count total number of users.
-        
+
         Returns:
             Total count
         """
         async with self.pool.acquire() as conn:
-            count = await conn.fetchval("SELECT COUNT(*) FROM \"user\"")
+            count = await conn.fetchval('SELECT COUNT(*) FROM "user"')
             return count or 0

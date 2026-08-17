@@ -17,10 +17,10 @@ notifications are for logged-in users only.
 import asyncio
 import json
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from ...config import SESSION_COOKIE_NAME, SSE_HEARTBEAT_INTERVAL
 
@@ -51,10 +51,8 @@ async def _event_stream() -> AsyncGenerator[str, None]:
         yield ": connected\n\n"
         while True:
             try:
-                raw = await asyncio.wait_for(
-                    queue.get(), timeout=SSE_HEARTBEAT_INTERVAL
-                )
-            except asyncio.TimeoutError:
+                raw = await asyncio.wait_for(queue.get(), timeout=SSE_HEARTBEAT_INTERVAL)
+            except TimeoutError:
                 # Silence: probe the connection. A dead client raises on the
                 # next send and the generator is closed by StreamingResponse.
                 yield ": keep-alive\n\n"
@@ -76,14 +74,10 @@ async def sse_tasks(request: Request):
     token = request.cookies.get(SESSION_COOKIE_NAME)
     user = await session_store.get(token) if (session_store and token) else None
     if user is None:
-        return JSONResponse(
-            status_code=401, content={"detail": "Authentication required"}
-        )
+        return JSONResponse(status_code=401, content={"detail": "Authentication required"})
 
     if events_hub is None or not events_hub.available:
-        return JSONResponse(
-            status_code=503, content={"detail": "Notifications unavailable"}
-        )
+        return JSONResponse(status_code=503, content={"detail": "Notifications unavailable"})
 
     return StreamingResponse(
         _event_stream(),

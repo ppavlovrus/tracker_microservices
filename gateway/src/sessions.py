@@ -13,7 +13,7 @@ open is not a gate at all.
 import json
 import logging
 import secrets
-from typing import Any, Dict, Optional
+from typing import Any
 
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
@@ -28,7 +28,7 @@ class SessionStore:
         self._redis_url = redis_url
         self._ttl = ttl
         self._enabled = enabled
-        self._client: Optional[aioredis.Redis] = None
+        self._client: aioredis.Redis | None = None
 
     async def connect(self) -> None:
         """Open the connection and ping. On failure the store stays down."""
@@ -62,7 +62,7 @@ class SessionStore:
     def _key(token: str) -> str:
         return f"sess:{token}"
 
-    async def create(self, user: Dict[str, Any]) -> Optional[str]:
+    async def create(self, user: dict[str, Any]) -> str | None:
         """Create a session for ``user`` and return its token.
 
         Returns ``None`` if the session could not be persisted (Redis down) so
@@ -86,7 +86,7 @@ class SessionStore:
             return None
         return token
 
-    async def get(self, token: str) -> Optional[Dict[str, Any]]:
+    async def get(self, token: str) -> dict[str, Any] | None:
         """Return the session record for ``token`` or None (fail closed)."""
         if self._client is None or not token:
             return None
@@ -124,7 +124,7 @@ class OAuthStateStore:
     def __init__(self, redis_url: str, ttl: int):
         self._redis_url = redis_url
         self._ttl = ttl
-        self._client: Optional[aioredis.Redis] = None
+        self._client: aioredis.Redis | None = None
 
     async def connect(self) -> None:
         """Open the connection and ping. On failure the store stays down."""
@@ -154,7 +154,7 @@ class OAuthStateStore:
     def _key(state: str) -> str:
         return f"oauth_state:{state}"
 
-    async def issue(self) -> Optional[str]:
+    async def issue(self) -> str | None:
         """Create and persist a fresh state token, or None if Redis is down."""
         if self._client is None:
             return None

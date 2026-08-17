@@ -5,17 +5,17 @@ The application itself uses asyncpg directly for database operations.
 """
 
 from sqlalchemy import (
+    TIMESTAMP,
+    BigInteger,
     Column,
+    Date,
+    ForeignKey,
     Integer,
     String,
-    Text,
-    TIMESTAMP,
-    Date,
-    BigInteger,
-    ForeignKey,
     Table,
+    Text,
 )
-from sqlalchemy.dialects.postgresql import UUID, INET
+from sqlalchemy.dialects.postgresql import INET, UUID
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
 
@@ -138,8 +138,10 @@ class Attachment(Base):
     # Relationships
     task = relationship("Task", back_populates="attachments")
 
+
 class Comment(Base):
     """Comment model."""
+
     __tablename__ = "comment"
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(Integer, ForeignKey("task.id", ondelete="CASCADE"), nullable=False)
@@ -148,6 +150,5 @@ class Comment(Base):
     created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
     updated_at = Column(TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now())
 
-    #Relationship
+    # Relationship
     task = relationship("Task", back_populates="comments")
-

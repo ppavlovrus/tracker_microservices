@@ -1,5 +1,5 @@
 """API routers."""
 
-from . import tasks, users, comments, tags, attachments
+from . import attachments, comments, tags, tasks, users
 
 __all__ = ["tasks", "users", "comments", "tags", "attachments"]

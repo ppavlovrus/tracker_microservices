@@ -8,10 +8,10 @@ DATABASE_PORT: int = int(os.getenv("DATABASE_PORT", 5432))
 DATABASE_NAME: str = os.getenv("DATABASE_NAME", "test_base")
 DATABASE_URL: str = os.getenv(
     "DATABASE_URL",
-    f"postgresql://{DATABASE_USERNAME}:{DATABASE_PASSWORD}@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}"
+    f"postgresql://{DATABASE_USERNAME}:{DATABASE_PASSWORD}@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}",
 )
 print("Created DB url:")
-print (DATABASE_URL)
+print(DATABASE_URL)
 
 DB_POOL_MIN_SIZE: int = 1
 DB_POOL_MAX_SIZE: int = 10

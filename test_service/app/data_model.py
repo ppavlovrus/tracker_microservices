@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field
 from datetime import date
+
+from pydantic import BaseModel, Field
+
 
 class ModelRecord(BaseModel):
     id: int | None = None
@@ -18,6 +20,7 @@ class ModelRecord(BaseModel):
 
     def __str__(self):
         return self.__repr__()
+
 
 class ModelResponse(BaseModel):
     status: str

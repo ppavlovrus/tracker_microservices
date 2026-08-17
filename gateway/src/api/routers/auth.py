@@ -2,16 +2,16 @@
 
 import asyncio
 import logging
+from typing import Annotated, Any
 
 import bcrypt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
-from typing import Annotated, Any, Dict, Optional
 
 from ...config import (
-    RPC_TIMEOUT,
-    SESSION_TTL,
-    SESSION_COOKIE_NAME,
     COOKIE_SECURE,
+    RPC_TIMEOUT,
+    SESSION_COOKIE_NAME,
+    SESSION_TTL,
 )
 from ..schemas.auth import LoginRequest, LoginResponse, UserPublic
 
@@ -48,8 +48,8 @@ def _verify_password(password: str, password_hash: str) -> bool:
 
 
 async def get_current_user(
-    session_token: Annotated[Optional[str], Cookie(alias=SESSION_COOKIE_NAME)] = None,
-) -> Optional[Dict[str, Any]]:
+    session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
+) -> dict[str, Any] | None:
     """Resolve the session cookie to a user record, or None if unauthenticated."""
     if session_store is None or not session_token:
         return None
@@ -57,8 +57,8 @@ async def get_current_user(
 
 
 async def require_auth(
-    user: Annotated[Optional[Dict[str, Any]], Depends(get_current_user)],
-) -> Dict[str, Any]:
+    user: Annotated[dict[str, Any] | None, Depends(get_current_user)],
+) -> dict[str, Any]:
     """Dependency that rejects unauthenticated requests with 401."""
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -97,9 +97,7 @@ async def login(credentials: LoginRequest, response: Response) -> LoginResponse:
         raise invalid
 
     user = rpc["data"]
-    ok = await asyncio.to_thread(
-        _verify_password, credentials.password, user.get("password_hash", "")
-    )
+    ok = await asyncio.to_thread(_verify_password, credentials.password, user.get("password_hash", ""))
     if not ok:
         raise invalid
 
@@ -124,7 +122,7 @@ async def login(credentials: LoginRequest, response: Response) -> LoginResponse:
 @router.post("/logout", status_code=204)
 async def logout(
     response: Response,
-    session_token: Annotated[Optional[str], Cookie(alias=SESSION_COOKIE_NAME)] = None,
+    session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
 ) -> None:
     """End the current session and clear the cookie. Idempotent."""
     if session_store is not None and session_token:
@@ -134,7 +132,7 @@ async def logout(
 
 @router.get("/me", response_model=UserPublic)
 async def me(
-    user: Annotated[Dict[str, Any], Depends(require_auth)],
+    user: Annotated[dict[str, Any], Depends(require_auth)],
 ) -> UserPublic:
     """Return the currently authenticated user."""
     return UserPublic(id=user["user_id"], username=user["username"], email=user.get("email"))

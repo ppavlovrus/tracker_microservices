@@ -1,18 +1,17 @@
 import asyncpg
-from typing import Optional
-
-from fastapi import FastAPI
 from config import (
     DATABASE_URL,
-    DB_POOL_MIN_SIZE,
-    DB_POOL_MAX_SIZE,
     DB_POOL_COMMAND_TIMEOUT,
-    DB_POOL_MAX_QUERIES,
     DB_POOL_MAX_INACTIVE_LIFETIME,
+    DB_POOL_MAX_QUERIES,
+    DB_POOL_MAX_SIZE,
+    DB_POOL_MIN_SIZE,
 )
+from fastapi import FastAPI
 
 # Global connection pool
-db_pool: Optional[asyncpg.Pool] = None
+db_pool: asyncpg.Pool | None = None
+
 
 async def lifespan(app: FastAPI):
 
@@ -36,7 +35,8 @@ async def lifespan(app: FastAPI):
     await db_pool.close()
     print("Database connection pool closed")
 
-def get_pool() -> Optional[asyncpg.Pool]:
+
+def get_pool() -> asyncpg.Pool | None:
     """Get database connection pool.
 
     Returns:

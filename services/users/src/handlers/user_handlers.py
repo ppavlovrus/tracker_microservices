@@ -1,7 +1,7 @@
 """User command handlers for RabbitMQ messages."""
 
 import logging
-from typing import Dict, Any
+from typing import Any
 
 import asyncpg
 
@@ -10,7 +10,7 @@ from ..repositories.user_repository import UserRepository
 logger = logging.getLogger(__name__)
 
 
-def _serialize_dates(user: Dict[str, Any]) -> Dict[str, Any]:
+def _serialize_dates(user: dict[str, Any]) -> dict[str, Any]:
     """Convert timestamp fields to ISO strings for JSON serialization."""
     for field in ("created_at", "updated_at", "last_login"):
         if user.get(field):
@@ -20,23 +20,23 @@ def _serialize_dates(user: Dict[str, Any]) -> Dict[str, Any]:
 
 class UserHandlers:
     """Handlers for user-related commands."""
-    
+
     def __init__(self, repository: UserRepository):
         """
         Initialize handlers.
-        
+
         Args:
             repository: UserRepository instance
         """
         self.repository = repository
-    
-    async def handle_create_user(self, data: Dict[str, Any]) -> Dict[str, Any]:
+
+    async def handle_create_user(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle create_user command.
-        
+
         Args:
             data: User data from command
-            
+
         Returns:
             Response with created user or error
         """
@@ -44,132 +44,96 @@ class UserHandlers:
             # Check if email already exists
             existing_user = await self.repository.get_by_email(data.get("email"))
             if existing_user:
-                return {
-                    "success": False,
-                    "error": "Email already exists"
-                }
-            
+                return {"success": False, "error": "Email already exists"}
+
             # Create user
             user = await self.repository.create(data)
-            
+
             # Convert timestamps to strings for JSON serialization
             if user.get("created_at"):
                 user["created_at"] = user["created_at"].isoformat()
             if user.get("updated_at"):
                 user["updated_at"] = user["updated_at"].isoformat()
-            
+
             logger.info(f"User created successfully: ID={user['id']}")
-            
-            return {
-                "success": True,
-                "data": user
-            }
-            
+
+            return {"success": True, "data": user}
+
         except Exception as e:
             logger.error(f"Error creating user: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-    
-    async def handle_get_user(self, data: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+    async def handle_get_user(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle get_user command.
-        
+
         Args:
             data: Contains user ID
-            
+
         Returns:
             Response with user data or error
         """
         try:
             user_id = data.get("id")
-            
+
             if not user_id:
-                return {
-                    "success": False,
-                    "error": "User ID is required"
-                }
-            
+                return {"success": False, "error": "User ID is required"}
+
             user = await self.repository.get_by_id(user_id)
-            
+
             if not user:
-                return {
-                    "success": False,
-                    "error": "User not found"
-                }
-            
+                return {"success": False, "error": "User not found"}
+
             # Convert timestamps to strings for JSON
             if user.get("created_at"):
                 user["created_at"] = user["created_at"].isoformat()
             if user.get("updated_at"):
                 user["updated_at"] = user["updated_at"].isoformat()
-            
+
             logger.debug(f"User retrieved: ID={user_id}")
-            
-            return {
-                "success": True,
-                "data": user
-            }
-            
+
+            return {"success": True, "data": user}
+
         except Exception as e:
             logger.error(f"Error getting user: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-    
-    async def handle_get_user_by_email(self, data: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+    async def handle_get_user_by_email(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle get_user_by_email command.
-        
+
         Args:
             data: Contains email
-            
+
         Returns:
             Response with user data or error
         """
         try:
             email = data.get("email")
-            
+
             if not email:
-                return {
-                    "success": False,
-                    "error": "Email is required"
-                }
-            
+                return {"success": False, "error": "Email is required"}
+
             user = await self.repository.get_by_email(email)
-            
+
             if not user:
-                return {
-                    "success": False,
-                    "error": "User not found"
-                }
-            
+                return {"success": False, "error": "User not found"}
+
             # Convert timestamps to strings for JSON
             if user.get("created_at"):
                 user["created_at"] = user["created_at"].isoformat()
             if user.get("updated_at"):
                 user["updated_at"] = user["updated_at"].isoformat()
-            
+
             logger.debug(f"User retrieved by email: {email}")
-            
-            return {
-                "success": True,
-                "data": user
-            }
-            
+
+            return {"success": True, "data": user}
+
         except Exception as e:
             logger.error(f"Error getting user by email: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-    
-    async def handle_get_user_by_username(self, data: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+    async def handle_get_user_by_username(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle get_user_by_username command (login lookup).
 
@@ -187,18 +151,12 @@ class UserHandlers:
             username = data.get("username")
 
             if not username:
-                return {
-                    "success": False,
-                    "error": "Username is required"
-                }
+                return {"success": False, "error": "Username is required"}
 
             user = await self.repository.get_by_username(username)
 
             if not user:
-                return {
-                    "success": False,
-                    "error": "User not found"
-                }
+                return {"success": False, "error": "User not found"}
 
             # Convert timestamps to strings for JSON
             if user.get("created_at"):
@@ -208,20 +166,13 @@ class UserHandlers:
 
             logger.debug(f"User retrieved by username: {username}")
 
-            return {
-                "success": True,
-                "data": user
-            }
+            return {"success": True, "data": user}
 
         except Exception as e:
             logger.error(f"Error getting user by username: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
 
-    async def handle_upsert_yandex_user(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_upsert_yandex_user(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle upsert_yandex_user command (Yandex OAuth login).
 
@@ -243,10 +194,7 @@ class UserHandlers:
             login = data.get("login")
 
             if not yandex_id or not email or not login:
-                return {
-                    "success": False,
-                    "error": "yandex_id, email and login are required"
-                }
+                return {"success": False, "error": "yandex_id, email and login are required"}
 
             user = await self.repository.get_by_yandex_id(yandex_id)
             if user:
@@ -274,158 +222,112 @@ class UserHandlers:
 
         except Exception as e:
             logger.error(f"Error upserting yandex user: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
 
-    async def handle_update_user(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_update_user(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle update_user command.
-        
+
         Args:
             data: Contains user ID and update fields
-            
+
         Returns:
             Response with updated user or error
         """
         try:
             user_id = data.get("id")
             update_data = data.get("update", {})
-            
+
             if not user_id:
-                return {
-                    "success": False,
-                    "error": "User ID is required"
-                }
-            
+                return {"success": False, "error": "User ID is required"}
+
             if not update_data:
-                return {
-                    "success": False,
-                    "error": "No fields to update"
-                }
-            
+                return {"success": False, "error": "No fields to update"}
+
             # If updating email, check if it's already taken
             if "email" in update_data:
                 existing_user = await self.repository.get_by_email(update_data["email"])
                 if existing_user and existing_user["id"] != user_id:
-                    return {
-                        "success": False,
-                        "error": "Email already exists"
-                    }
-            
+                    return {"success": False, "error": "Email already exists"}
+
             # Update user
             user = await self.repository.update(user_id, update_data)
-            
+
             if not user:
-                return {
-                    "success": False,
-                    "error": "User not found"
-                }
-            
+                return {"success": False, "error": "User not found"}
+
             # Convert timestamps to strings for JSON
             if user.get("created_at"):
                 user["created_at"] = user["created_at"].isoformat()
             if user.get("updated_at"):
                 user["updated_at"] = user["updated_at"].isoformat()
-            
+
             logger.info(f"User updated successfully: ID={user_id}")
-            
-            return {
-                "success": True,
-                "data": user
-            }
-            
+
+            return {"success": True, "data": user}
+
         except Exception as e:
             logger.error(f"Error updating user: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-    
-    async def handle_delete_user(self, data: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+    async def handle_delete_user(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle delete_user command.
-        
+
         Args:
             data: Contains user ID
-            
+
         Returns:
             Response indicating success or error
         """
         try:
             user_id = data.get("id")
-            
+
             if not user_id:
-                return {
-                    "success": False,
-                    "error": "User ID is required"
-                }
-            
+                return {"success": False, "error": "User ID is required"}
+
             deleted = await self.repository.delete(user_id)
-            
+
             if not deleted:
-                return {
-                    "success": False,
-                    "error": "User not found"
-                }
-            
+                return {"success": False, "error": "User not found"}
+
             logger.info(f"User deleted successfully: ID={user_id}")
-            
-            return {
-                "success": True,
-                "data": {"deleted": True, "id": user_id}
-            }
-            
+
+            return {"success": True, "data": {"deleted": True, "id": user_id}}
+
         except Exception as e:
             logger.error(f"Error deleting user: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
-    
-    async def handle_list_users(self, data: Dict[str, Any]) -> Dict[str, Any]:
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+
+    async def handle_list_users(self, data: dict[str, Any]) -> dict[str, Any]:
         """
         Handle list_users command.
-        
+
         Args:
             data: Contains limit and offset
-            
+
         Returns:
             Response with list of users or error
         """
         try:
             limit = data.get("limit", 10)
             offset = data.get("offset", 0)
-            
+
             # Get users and total count
             users = await self.repository.get_all(limit=limit, offset=offset)
             total = await self.repository.count_all()
-            
+
             # Convert timestamps to strings for JSON
             for user in users:
                 if user.get("created_at"):
                     user["created_at"] = user["created_at"].isoformat()
                 if user.get("updated_at"):
                     user["updated_at"] = user["updated_at"].isoformat()
-            
+
             logger.debug(f"Listed {len(users)} users (total={total}, limit={limit}, offset={offset})")
-            
-            return {
-                "success": True,
-                "data": {
-                    "users": users,
-                    "total": total
-                }
-            }
-            
+
+            return {"success": True, "data": {"users": users, "total": total}}
+
         except Exception as e:
             logger.error(f"Error listing users: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_type": type(e).__name__
-            }
+            return {"success": False, "error": str(e), "error_type": type(e).__name__}

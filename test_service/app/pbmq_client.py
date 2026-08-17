@@ -1,6 +1,3 @@
-import asyncio
-import aio_pika
-
 class PbMqClient:
     connection = None
     queue_name = None
@@ -21,6 +18,6 @@ class PbMqClient:
 
     async def close(self):
         pass
+
     def __init__(self, queue_name: str):
         self.queue_name = queue_name
-

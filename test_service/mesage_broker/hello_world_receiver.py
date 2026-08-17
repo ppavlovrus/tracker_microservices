@@ -1,6 +1,6 @@
-import aio_pika
 import asyncio
 
+import aio_pika
 from aio_pika.abc import AbstractIncomingMessage
 
 
@@ -16,6 +16,7 @@ async def on_message(message: AbstractIncomingMessage) -> None:
     await asyncio.sleep(5)  # Represents async I/O operations
     print("After sleep!")
 
+
 async def receiver() -> None:
     connection = await aio_pika.connect("amqp://guest:guest@localhost:5672/")
     async with connection:
@@ -24,5 +25,6 @@ async def receiver() -> None:
         await queue.consume(on_message, no_ack=True)
         print(" [*] Waiting for messages. To exit press CTRL+C")
         await asyncio.Future()
+
 
 asyncio.run(receiver())

@@ -22,7 +22,7 @@ gateway's memory without bound.
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
@@ -40,8 +40,8 @@ class EventsHub:
         self._redis_url = redis_url
         self._channel = channel
         self._max_queue = max_queue
-        self._client: Optional[aioredis.Redis] = None
-        self._queues: Set[asyncio.Queue] = set()
+        self._client: aioredis.Redis | None = None
+        self._queues: set[asyncio.Queue] = set()
 
     @property
     def available(self) -> bool:
@@ -86,7 +86,7 @@ class EventsHub:
 
     # -- publishing --------------------------------------------------------
 
-    async def publish(self, event: Dict[str, Any]) -> None:
+    async def publish(self, event: dict[str, Any]) -> None:
         """Broadcast an event via pub/sub. Best-effort: never raises."""
         if self._client is None:
             return

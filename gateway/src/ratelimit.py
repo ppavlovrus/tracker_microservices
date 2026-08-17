@@ -15,7 +15,6 @@ limiter must never become a self-inflicted outage.
 """
 
 import logging
-from typing import Optional, Tuple
 
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
@@ -84,7 +83,7 @@ class RateLimiter:
         self.capacity = capacity
         self.refill_rate = refill_rate
         self._enabled = enabled
-        self._client: Optional[aioredis.Redis] = None
+        self._client: aioredis.Redis | None = None
         self._script = None
 
     async def connect(self) -> None:
@@ -109,17 +108,14 @@ class RateLimiter:
 
         self._client = client
         self._script = client.register_script(_TOKEN_BUCKET_LUA)
-        logger.info(
-            f"Rate limiter connected: capacity={self.capacity}, "
-            f"refill={self.refill_rate}/s"
-        )
+        logger.info(f"Rate limiter connected: capacity={self.capacity}, refill={self.refill_rate}/s")
 
     async def close(self) -> None:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
 
-    async def check(self, ip: str) -> Tuple[bool, int, float]:
+    async def check(self, ip: str) -> tuple[bool, int, float]:
         """Consume one token for ``ip``.
 
         Returns ``(allowed, remaining, retry_after_seconds)``. On any Redis
@@ -141,7 +137,5 @@ class RateLimiter:
             return True, self.capacity, 0.0
 
         is_allowed = bool(int(allowed))
-        RATE_LIMIT_DECISIONS.labels(
-            decision="allowed" if is_allowed else "blocked"
-        ).inc()
+        RATE_LIMIT_DECISIONS.labels(decision="allowed" if is_allowed else "blocked").inc()
         return is_allowed, int(float(tokens)), float(retry_after)

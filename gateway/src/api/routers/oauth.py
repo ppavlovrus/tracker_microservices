@@ -5,7 +5,6 @@ the profile, after which the user gets a regular local session cookie.
 """
 
 import logging
-from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
@@ -13,17 +12,17 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 
 from ...config import (
-    RPC_TIMEOUT,
-    SESSION_TTL,
-    SESSION_COOKIE_NAME,
     COOKIE_SECURE,
+    OAUTH_HTTP_TIMEOUT,
+    RPC_TIMEOUT,
+    SESSION_COOKIE_NAME,
+    SESSION_TTL,
     YANDEX_CLIENT_ID,
     YANDEX_CLIENT_SECRET,
+    YANDEX_OAUTH_BASE_URL,
     YANDEX_OAUTH_ENABLED,
     YANDEX_REDIRECT_URI,
-    YANDEX_OAUTH_BASE_URL,
     YANDEX_USERINFO_URL,
-    OAUTH_HTTP_TIMEOUT,
 )
 
 logger = logging.getLogger(__name__)
@@ -77,16 +76,14 @@ async def yandex_login() -> RedirectResponse:
             "state": state,
         }
     )
-    return RedirectResponse(
-        url=f"{YANDEX_OAUTH_BASE_URL}/authorize?{params}", status_code=302
-    )
+    return RedirectResponse(url=f"{YANDEX_OAUTH_BASE_URL}/authorize?{params}", status_code=302)
 
 
 @router.get("/callback")
 async def yandex_callback(
-    code: Optional[str] = None,
-    state: Optional[str] = None,
-    error: Optional[str] = None,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
 ) -> RedirectResponse:
     """Finish the flow: verify state, exchange the code, log the user in."""
     if not YANDEX_OAUTH_ENABLED:

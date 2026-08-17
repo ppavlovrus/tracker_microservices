@@ -1,23 +1,23 @@
 """Task schemas for Gateway API."""
 
 from datetime import date, datetime
-from typing import Optional
+
 from pydantic import BaseModel, Field, field_validator
 
 
 class TaskCreate(BaseModel):
     """Schema for creating a new task."""
-    
+
     title: str = Field(..., min_length=1, max_length=255, description="Task title")
-    description: Optional[str] = Field(None, description="Task description")
+    description: str | None = Field(None, description="Task description")
     status_id: int = Field(1, description="Task status ID (default: 1)")
     creator_id: int = Field(..., description="User ID who creates the task")
-    deadline_start: Optional[date] = Field(None, description="Task start deadline")
-    deadline_end: Optional[date] = Field(None, description="Task end deadline")
-    
+    deadline_start: date | None = Field(None, description="Task start deadline")
+    deadline_end: date | None = Field(None, description="Task end deadline")
+
     @field_validator("deadline_end")
     @classmethod
-    def validate_deadline_end(cls, v: Optional[date], info) -> Optional[date]:
+    def validate_deadline_end(cls, v: date | None, info) -> date | None:
         """Validate that deadline_end is after deadline_start."""
         if v and info.data.get("deadline_start"):
             if v < info.data["deadline_start"]:
@@ -27,16 +27,16 @@ class TaskCreate(BaseModel):
 
 class TaskUpdate(BaseModel):
     """Schema for updating a task."""
-    
-    title: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    status_id: Optional[int] = None
-    deadline_start: Optional[date] = None
-    deadline_end: Optional[date] = None
-    
+
+    title: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
+    status_id: int | None = None
+    deadline_start: date | None = None
+    deadline_end: date | None = None
+
     @field_validator("deadline_end")
     @classmethod
-    def validate_deadline_end(cls, v: Optional[date], info) -> Optional[date]:
+    def validate_deadline_end(cls, v: date | None, info) -> date | None:
         """Validate that deadline_end is after deadline_start."""
         if v and info.data.get("deadline_start"):
             if v < info.data["deadline_start"]:
@@ -62,11 +62,11 @@ class TaskResponse(BaseModel):
 
     id: int
     title: str
-    description: Optional[str] = None
+    description: str | None = None
     status_id: int
     creator_id: int
-    deadline_start: Optional[date] = None
-    deadline_end: Optional[date] = None
+    deadline_start: date | None = None
+    deadline_end: date | None = None
     created_at: datetime
     updated_at: datetime
     tags: list[TaskTag] = []

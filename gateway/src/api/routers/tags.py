@@ -1,15 +1,16 @@
 """Tags router for Gateway API."""
 
 import logging
-from fastapi import APIRouter, HTTPException, Query
 from typing import Annotated
 
-from ...config import RPC_TIMEOUT, CACHE_TTL_TAGS
+from fastapi import APIRouter, HTTPException, Query
+
+from ...config import CACHE_TTL_TAGS, RPC_TIMEOUT
 from ..schemas.tags import (
     TagCreate,
-    TagUpdate,
-    TagResponse,
     TagListResponse,
+    TagResponse,
+    TagUpdate,
 )
 
 logger = logging.getLogger(__name__)

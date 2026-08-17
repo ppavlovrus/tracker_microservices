@@ -21,9 +21,7 @@ async def index(request: Request):
 @router.get("/web/login", response_class=HTMLResponse)
 async def login_page(request: Request):
     """Login page."""
-    return templates.TemplateResponse(
-        request, "login.html", {"yandex_oauth_enabled": YANDEX_OAUTH_ENABLED}
-    )
+    return templates.TemplateResponse(request, "login.html", {"yandex_oauth_enabled": YANDEX_OAUTH_ENABLED})
 
 
 @router.get("/web/tasks", response_class=HTMLResponse)
