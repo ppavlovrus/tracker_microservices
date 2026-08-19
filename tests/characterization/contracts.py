@@ -40,3 +40,11 @@ class TaskListContract(Contract):
     total: int
     limit: int
     offset: int
+
+
+class StatsContract(Contract):
+    total: int
+    # Keys are strings on purpose: the gateway builds dict[int, int], but JSON has
+    # no numeric keys, so the client sees {"1": n}. Declaring dict[int, int] here
+    # would make Pydantic coerce them back and hide what crosses the wire.
+    by_status: dict[str, int]

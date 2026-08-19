@@ -6,16 +6,20 @@ from contracts import TaskContract
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
+# httpx reads proxy settings from the environment. These tests talk to localhost
+# and must not go through the cascade SOCKS proxy -- with it enabled the whole run
+# dies at import time with "ImportError: socksio". Hence trust_env=False below.
+
 
 @pytest.fixture
 async def client():
-    async with httpx.AsyncClient(base_url=BASE_URL) as client:
+    async with httpx.AsyncClient(base_url=BASE_URL, trust_env=False) as client:
         yield client
 
 
 @pytest.fixture
 async def auth_client():
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=10.0) as client:
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=10.0, trust_env=False) as client:
         response = await client.post("/auth/login", json={"username": "admin", "password": "admin"})
         assert response.status_code == 200, f"Login failed: {response.status_code} {response.text}"
         yield client

@@ -5,7 +5,7 @@ turns red during the refactor, the refactor changed behaviour -- decide whether
 that was intended before touching the assertion.
 """
 
-from contracts import TaskContract
+from contracts import StatsContract, TaskContract, TaskListContract
 
 
 async def test_create_task_returns_201_with_the_full_task(auth_client, trash):
@@ -38,3 +38,60 @@ async def test_get_missing_task_returns_404(auth_client, make_task):
     response = await auth_client.get(f"/tasks/{task.id}")
     assert response.status_code == 404
     assert response.json()["detail"] == "Task not found"
+
+
+async def test_broken_body_422(auth_client):
+    payload = {"creator_id": 1}
+    response = await auth_client.post("/tasks", json=payload)
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert isinstance(detail, list)
+    assert any("title" in item["loc"] for item in detail)
+
+
+async def test_broken_body_401(client):
+    payload = {"creator_id": 1}
+    response = await client.post("/tasks", json=payload)
+    assert response.status_code == 401
+
+
+async def test_task_create_increase_total_and_status_counter_by_1(auth_client, make_task):
+    response = await auth_client.get("/tasks/stats")
+    assert response.status_code == 200
+    before = StatsContract.model_validate(response.json())
+    payload = {"status_id": 1}
+    await make_task(**payload)
+    response2 = await auth_client.get("/tasks/stats")
+    assert response2.status_code == 200
+    after = StatsContract.model_validate(response2.json())
+    assert after.total - before.total == 1
+    # "1" may be absent from the "before" snapshot on a database with no tasks
+    # in that status yet; after creating one it must be there.
+    assert after.by_status["1"] - before.by_status.get("1", 0) == 1
+    assert sum(after.by_status.values()) == after.total
+
+
+async def test_get_limits_5_and_offset_0(auth_client):
+    response = await auth_client.get("/tasks", params={"limit": 5, "offset": 0})
+    assert response.status_code == 200
+    body = TaskListContract.model_validate(response.json())
+    assert body.limit == 5
+    assert body.offset == 0
+    assert len(body.tasks) <= 5
+    assert body.total >= len(body.tasks)
+
+
+async def test_pages_do_not_overlap(auth_client, make_task):
+    await make_task()
+    await make_task()
+    response1 = await auth_client.get("/tasks", params={"limit": 1, "offset": 0})
+    assert response1.status_code == 200
+    body1 = TaskListContract.model_validate(response1.json())
+    response2 = await auth_client.get("/tasks", params={"limit": 1, "offset": 1})
+    assert response2.status_code == 200
+    body2 = TaskListContract.model_validate(response2.json())
+    ids_first = {task.id for task in body1.tasks}
+    ids_second = {task.id for task in body2.tasks}
+    assert len(body1.tasks) == 1
+    assert len(body2.tasks) == 1
+    assert ids_first.isdisjoint(ids_second)
