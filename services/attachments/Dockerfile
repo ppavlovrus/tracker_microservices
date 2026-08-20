@@ -5,4 +5,4 @@ RUN pip install ./common
 COPY services/attachments/ ./services/attachments/
 RUN pip install ./services/attachments
 WORKDIR /app/services/attachments
-CMD ["python", "main.py"]
+CMD ["python", "-m", "tracker_attachments"]

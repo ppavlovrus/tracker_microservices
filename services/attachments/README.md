@@ -79,7 +79,7 @@ pip install -e .
 ### Запуск сервиса
 
 ```bash
-python main.py
+python -m tracker_attachments
 ```
 
 ## Переменные окружения
@@ -99,7 +99,7 @@ python main.py
 
 ## Архитектура
 
-- `main.py` - Точка входа, RabbitMQ consumer
-- `config.py` - Конфигурация сервиса
-- `src/handlers/` - Обработчики команд
-- `src/repositories/` - Работа с БД
+- `tracker_attachments/__main__.py` - Точка входа, RabbitMQ consumer
+- `tracker_attachments/config.py` - Конфигурация сервиса
+- `tracker_attachments/handlers/` - Обработчики команд
+- `tracker_attachments/repositories/` - Работа с БД

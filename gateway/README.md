@@ -43,20 +43,20 @@ LOG_LEVEL=INFO
 ### Вариант 1: Python
 
 ```bash
-python -m src.main
+python -m tracker_gateway.main
 ```
 
 ### Вариант 2: Uvicorn
 
 ```bash
-uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn tracker_gateway.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Вариант 3: Из любой директории
 
 ```bash
 cd /path/to/gateway
-python src/main.py
+python -m tracker_gateway.main
 ```
 
 ## API Endpoints
@@ -197,7 +197,7 @@ curl -X DELETE http://localhost:8000/tasks/1
 
 ```
 gateway/
-├── src/
+├── tracker_gateway/
 │   ├── __init__.py
 │   ├── main.py              # FastAPI app + lifespan
 │   ├── config.py            # Конфигурация

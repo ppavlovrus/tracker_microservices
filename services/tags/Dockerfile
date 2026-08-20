@@ -5,4 +5,4 @@ RUN pip install ./common
 COPY services/tags/ ./services/tags/
 RUN pip install ./services/tags
 WORKDIR /app/services/tags
-CMD ["python", "main.py"]
+CMD ["python", "-m", "tracker_tags"]

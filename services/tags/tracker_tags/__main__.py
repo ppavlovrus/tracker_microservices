@@ -7,7 +7,9 @@ import sys
 
 import asyncpg
 from aio_pika import IncomingMessage
-from config import (
+from task_tracker_common.messaging import RabbitMQClient
+
+from .config import (
     AMQP_URL,
     DB_HOST,
     DB_NAME,
@@ -21,9 +23,8 @@ from config import (
     QUEUE_NAME,
     SERVICE_NAME,
 )
-from src.handlers import TagHandlers
-from src.repositories import TagRepository
-from task_tracker_common.messaging import RabbitMQClient
+from .handlers import TagHandlers
+from .repositories import TagRepository
 
 # Setup logging
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

@@ -9,4 +9,4 @@ RUN pip install ./services/tasks
 
 WORKDIR /app/services/tasks
 
-CMD ["python", "main.py"]
+CMD ["python", "-m", "tracker_tasks"]

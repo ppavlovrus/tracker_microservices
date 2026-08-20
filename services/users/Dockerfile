@@ -5,4 +5,4 @@ RUN pip install ./common
 COPY services/users/ ./services/users/
 RUN pip install ./services/users
 WORKDIR /app/services/users
-CMD ["python", "main.py"]
+CMD ["python", "-m", "tracker_users"]

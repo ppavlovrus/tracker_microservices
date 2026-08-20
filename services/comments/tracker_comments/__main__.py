@@ -1,4 +1,4 @@
-"""Tasks Service - Worker for handling task commands."""
+"""Comments Service - Worker for handling comment commands."""
 
 import asyncio
 import logging
@@ -7,7 +7,9 @@ import sys
 
 import asyncpg
 from aio_pika import IncomingMessage
-from config import (
+from task_tracker_common.messaging import RabbitMQClient
+
+from .config import (
     AMQP_URL,
     DB_HOST,
     DB_NAME,
@@ -21,9 +23,8 @@ from config import (
     QUEUE_NAME,
     SERVICE_NAME,
 )
-from src.handlers import TaskHandlers
-from src.repositories import TaskRepository
-from task_tracker_common.messaging import RabbitMQClient
+from .handlers import CommentHandlers
+from .repositories import CommentRepository
 
 # Setup logging
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Global instances
 db_pool: asyncpg.Pool = None
 rabbitmq_client: RabbitMQClient = None
-task_handlers: TaskHandlers = None
+comment_handlers: CommentHandlers = None
 shutdown_event = None
 
 
@@ -74,29 +75,20 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
     logger.debug(f"Handling command: {command}")
 
     try:
-        if command == "create_task":
-            return await task_handlers.handle_create_task(data)
+        if command == "create_comment":
+            return await comment_handlers.handle_create_comment(data)
 
-        elif command == "get_task":
-            return await task_handlers.handle_get_task(data)
+        elif command == "get_comment":
+            return await comment_handlers.handle_get_comment(data)
 
-        elif command == "update_task":
-            return await task_handlers.handle_update_task(data)
+        elif command == "update_comment":
+            return await comment_handlers.handle_update_comment(data)
 
-        elif command == "delete_task":
-            return await task_handlers.handle_delete_task(data)
+        elif command == "delete_comment":
+            return await comment_handlers.handle_delete_comment(data)
 
-        elif command == "list_tasks":
-            return await task_handlers.handle_list_tasks(data)
-
-        elif command == "task_stats":
-            return await task_handlers.handle_task_stats(data)
-
-        elif command == "add_task_tag":
-            return await task_handlers.handle_add_task_tag(data)
-
-        elif command == "remove_task_tag":
-            return await task_handlers.handle_remove_task_tag(data)
+        elif command == "list_comments_by_task":
+            return await comment_handlers.handle_list_comments_by_task(data)
 
         else:
             logger.warning(f"Unknown command: {command}")
@@ -109,7 +101,7 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
 
 async def startup():
     """Initialize service components."""
-    global db_pool, rabbitmq_client, task_handlers
+    global db_pool, rabbitmq_client, comment_handlers
 
     logger.info("=" * 60)
     logger.info(f"Starting {SERVICE_NAME}...")
@@ -120,8 +112,8 @@ async def startup():
         db_pool = await create_db_pool()
 
         # Initialize repository and handlers
-        task_repository = TaskRepository(db_pool)
-        task_handlers = TaskHandlers(task_repository)
+        comment_repository = CommentRepository(db_pool)
+        comment_handlers = CommentHandlers(comment_repository)
 
         logger.info("Repository and handlers initialized")
 

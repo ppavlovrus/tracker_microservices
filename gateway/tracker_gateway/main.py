@@ -323,4 +323,4 @@ async def health_check():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("src.main:app", host=HOST, port=PORT, reload=True, log_level=LOG_LEVEL.lower())
+    uvicorn.run("tracker_gateway.main:app", host=HOST, port=PORT, reload=True, log_level=LOG_LEVEL.lower())

@@ -1,4 +1,4 @@
-"""Attachments Service - Worker for handling attachment commands."""
+"""Tasks Service - Worker for handling task commands."""
 
 import asyncio
 import logging
@@ -7,7 +7,9 @@ import sys
 
 import asyncpg
 from aio_pika import IncomingMessage
-from config import (
+from task_tracker_common.messaging import RabbitMQClient
+
+from .config import (
     AMQP_URL,
     DB_HOST,
     DB_NAME,
@@ -19,19 +21,10 @@ from config import (
     LOG_LEVEL,
     PREFETCH_COUNT,
     QUEUE_NAME,
-    S3_ACCESS_KEY,
-    S3_BUCKET,
-    S3_ENDPOINT_INTERNAL,
-    S3_ENDPOINT_PUBLIC,
-    S3_PRESIGN_EXPIRE,
-    S3_REGION,
-    S3_SECRET_KEY,
     SERVICE_NAME,
 )
-from src.handlers import AttachmentHandlers
-from src.repositories import AttachmentRepository
-from src.storage import S3Storage
-from task_tracker_common.messaging import RabbitMQClient
+from .handlers import TaskHandlers
+from .repositories import TaskRepository
 
 # Setup logging
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -40,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Global instances
 db_pool: asyncpg.Pool = None
 rabbitmq_client: RabbitMQClient = None
-attachment_handlers: AttachmentHandlers = None
+task_handlers: TaskHandlers = None
 shutdown_event = None
 
 
@@ -82,17 +75,29 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
     logger.debug(f"Handling command: {command}")
 
     try:
-        if command == "create_attachment":
-            return await attachment_handlers.handle_create_attachment(data)
+        if command == "create_task":
+            return await task_handlers.handle_create_task(data)
 
-        elif command == "get_attachment":
-            return await attachment_handlers.handle_get_attachment(data)
+        elif command == "get_task":
+            return await task_handlers.handle_get_task(data)
 
-        elif command == "delete_attachment":
-            return await attachment_handlers.handle_delete_attachment(data)
+        elif command == "update_task":
+            return await task_handlers.handle_update_task(data)
 
-        elif command == "list_attachments_by_task":
-            return await attachment_handlers.handle_list_attachments_by_task(data)
+        elif command == "delete_task":
+            return await task_handlers.handle_delete_task(data)
+
+        elif command == "list_tasks":
+            return await task_handlers.handle_list_tasks(data)
+
+        elif command == "task_stats":
+            return await task_handlers.handle_task_stats(data)
+
+        elif command == "add_task_tag":
+            return await task_handlers.handle_add_task_tag(data)
+
+        elif command == "remove_task_tag":
+            return await task_handlers.handle_remove_task_tag(data)
 
         else:
             logger.warning(f"Unknown command: {command}")
@@ -105,7 +110,7 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
 
 async def startup():
     """Initialize service components."""
-    global db_pool, rabbitmq_client, attachment_handlers
+    global db_pool, rabbitmq_client, task_handlers
 
     logger.info("=" * 60)
     logger.info(f"Starting {SERVICE_NAME}...")
@@ -115,21 +120,9 @@ async def startup():
         # Create database pool
         db_pool = await create_db_pool()
 
-        # Initialize S3 storage and ensure the bucket exists
-        storage = S3Storage(
-            internal_endpoint=S3_ENDPOINT_INTERNAL,
-            public_endpoint=S3_ENDPOINT_PUBLIC,
-            access_key=S3_ACCESS_KEY,
-            secret_key=S3_SECRET_KEY,
-            bucket=S3_BUCKET,
-            region=S3_REGION,
-            presign_expire=S3_PRESIGN_EXPIRE,
-        )
-        await storage.ensure_bucket()
-
         # Initialize repository and handlers
-        attachment_repository = AttachmentRepository(db_pool)
-        attachment_handlers = AttachmentHandlers(attachment_repository, storage)
+        task_repository = TaskRepository(db_pool)
+        task_handlers = TaskHandlers(task_repository)
 
         logger.info("Repository and handlers initialized")
 
