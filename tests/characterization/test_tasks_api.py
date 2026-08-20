@@ -95,3 +95,31 @@ async def test_pages_do_not_overlap(auth_client, make_task):
     assert len(body1.tasks) == 1
     assert len(body2.tasks) == 1
     assert ids_first.isdisjoint(ids_second)
+
+
+async def test_update_invalidates_cached_task(auth_client, make_task):
+    task = await make_task()
+    test_string = "this is super-puper-title"
+    # Warm the cache: without this read the GET below would go to the worker
+    # anyway and the test would pass even with invalidation removed.
+    # Verified by mutation -- commenting out cache.delete in update_task (routers/tasks.py)
+    # turns this test red and nothing else.
+    response = await auth_client.get(f"/tasks/{task.id}")
+    assert response.status_code == 200
+    payload = {"title": test_string}
+    response2 = await auth_client.put(f"/tasks/{task.id}", json=payload)
+    assert response2.status_code == 200
+    response3 = await auth_client.get(f"/tasks/{task.id}")
+    assert response3.status_code == 200
+    task_updated = TaskContract.model_validate(response3.json())
+    assert task_updated.title == test_string
+
+
+async def test_unknown_field_in_request_totally_ignored(auth_client, trash):
+    payload = {"title": "supertest", "creator_id": 1, "totally_unknown_field": 42}
+    response = await auth_client.post("/tasks", json=payload)
+    assert response.status_code == 201
+    task = TaskContract.model_validate(response.json())
+    trash.append(task.id)
+    assert task.title == "supertest"
+    assert task.creator_id == 1
