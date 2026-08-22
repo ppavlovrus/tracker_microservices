@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import Field
 
@@ -70,3 +70,25 @@ class TaskTags(Contract):
 # the data, not from the protocol, so pinning them here would freeze status ids into
 # the contract — hence a mapping rather than a fixed model.
 type TaskStats = dict[str, int]
+
+
+def rpc_ok(contract: Any, data: Any) -> dict[str, Any]:
+    """Build the success envelope for the wire, validating ``data`` on the way out.
+
+    ``contract`` is the payload shape this command promises (``TaskData``,
+    ``TaskList``, ...). Validating here, rather than trusting whatever the
+    repository handed back, means a handler that drifts from its contract fails
+    inside the worker where the traceback still points at the query that
+    produced the row -- instead of surfacing as a shape error in the gateway,
+    one process and one queue away.
+    """
+    return RpcOk[contract](success=True, data=data).model_dump(mode="json")
+
+
+def rpc_error(code: ErrorCode, message: str, error_type: str | None = None) -> dict[str, Any]:
+    """Build the failure envelope for the wire.
+
+    ``code`` is the field callers branch on; ``message`` is for humans reading
+    logs and must never be the only thing carrying meaning.
+    """
+    return RpcError(success=False, code=code, error=message, error_type=error_type).model_dump(mode="json")
