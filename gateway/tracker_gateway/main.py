@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from task_tracker_common.messaging import RabbitMQClient
 
+from .api.errors import register_error_handlers
 from .api.routers import (
     attachments,
     auth,
@@ -242,6 +243,10 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Domain errors become HTTP statuses here and nowhere else. Registering the
+# base class is enough: Starlette looks a handler up along type(exc).__mro__.
+register_error_handlers(app)
 
 
 @app.middleware("http")

@@ -1,11 +1,21 @@
-"""Tasks router for Gateway API."""
+"""Tasks router for Gateway API.
+
+The router does three things and no more: turn a request into a command, ask
+the bus, and shape the answer for HTTP. It has no try/except and raises no
+HTTPException -- failures travel as domain errors and become statuses in
+``api/errors.py``. What is left here that is not plumbing is the caching and
+the change notifications.
+"""
 
 import logging
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path, Query
+from task_tracker_common.contracts.base import INT4_MAX
+from task_tracker_common.contracts.commands import TaskCreationContract, TaskUpdatePayloadContract
 
+from ...broker.tasks_client import TasksBusClient
 from ...config import CACHE_TTL_TASK, CACHE_TTL_TASKS_LIST, RPC_TIMEOUT
 from ..schemas.task import (
     TaskCreate,
@@ -17,15 +27,27 @@ from ..schemas.task import (
     TaskUpdate,
 )
 
-# Queue of the tags service, used when resolving a tag by name.
+# Queue of the tags service, used when resolving a tag by name. Still spoken to
+# raw: the tags vertical has not moved onto contracts yet.
 TAGS_QUEUE = "tags.commands"
+
+# Path ids are bounded to the width of the column they address. The bound is not
+# decoration: the payload contracts require a positive int4, and a contract that
+# fails to build inside the bus client would surface as a bare 500. The edge
+# must be at least as strict as the contract behind it.
+TaskId = Annotated[int, Path(ge=1, le=INT4_MAX)]
+TagId = Annotated[int, Path(ge=1, le=INT4_MAX)]
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
-# Global RabbitMQ client (will be set in main.py lifespan)
+# Until the lifespan hands us a live connection this client answers
+# BusUnavailableError, which is exactly what is true before startup finishes.
+bus = TasksBusClient(None)
+
+# Raw client, kept only for the tags service (see TAGS_QUEUE above).
 rabbitmq_client = None
 
 # Global cache instance (will be set in main.py lifespan)
@@ -37,7 +59,8 @@ events_hub = None
 
 def set_rabbitmq_client(client):
     """Set RabbitMQ client instance."""
-    global rabbitmq_client
+    global bus, rabbitmq_client
+    bus = TasksBusClient(client)
     rabbitmq_client = client
 
 
@@ -79,46 +102,27 @@ def _tasks_list_key(limit: int, offset: int) -> str:
     return f"tasks:list:{limit}:{offset}"
 
 
+async def _invalidate_task_cache(task_id: int) -> None:
+    """Drop the cached task and all list pages after a write."""
+    if cache:
+        await cache.delete(_task_key(task_id))
+        await cache.delete_pattern("tasks:list:*")
+
+
 @router.post("", response_model=TaskResponse, status_code=201)
 async def create_task(task: TaskCreate) -> TaskResponse:
-    """
-    Create a new task.
+    """Create a new task."""
+    created = await bus.create(TaskCreationContract(**task.model_dump()))
 
-    Sends command to Tasks microservice via RabbitMQ.
-    """
-    if not rabbitmq_client:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+    # A new task can appear on any list page -> drop all cached pages.
+    if cache:
+        await cache.delete_pattern("tasks:list:*")
 
-    try:
-        # Send RPC command to Tasks service
-        response = await rabbitmq_client.call(
-            queue_name="tasks.commands",
-            message={"command": "create_task", "data": task.model_dump()},
-            timeout=RPC_TIMEOUT,
-        )
+    result = TaskResponse(**created.model_dump())
+    await _publish_event("task.created", {"task": result.model_dump(mode="json")})
 
-        # Check response
-        if not response.get("success"):
-            error_msg = response.get("error", "Unknown error")
-            logger.error(f"Failed to create task: {error_msg}")
-            raise HTTPException(status_code=500, detail=error_msg)
-
-        # A new task can appear on any list page -> drop all cached pages.
-        if cache:
-            await cache.delete_pattern("tasks:list:*")
-
-        created = TaskResponse(**response["data"])
-        await _publish_event("task.created", {"task": created.model_dump(mode="json")})
-
-        logger.info(f"Task created successfully: {response['data'].get('id')}")
-        return created
-
-    except TimeoutError:
-        logger.error("Timeout waiting for Tasks service response")
-        raise HTTPException(status_code=504, detail="Tasks service timeout")
-    except Exception as e:
-        logger.error(f"Error creating task: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    logger.info(f"Task created successfully: {result.id}")
+    return result
 
 
 @router.get("/stats", response_model=TaskStatsResponse)
@@ -128,47 +132,17 @@ async def task_stats() -> TaskStatsResponse:
     Declared before ``/{task_id}`` so "stats" is not parsed as a task id. Not
     cached: it is a single-scan aggregate and must reflect writes immediately.
     """
-    if not rabbitmq_client:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+    counts = await bus.stats()
 
-    try:
-        response = await rabbitmq_client.call(
-            queue_name="tasks.commands",
-            message={"command": "task_stats", "data": {}},
-            timeout=RPC_TIMEOUT,
-        )
-
-        if not response.get("success"):
-            error_msg = response.get("error", "Unknown error")
-            logger.error(f"Failed to get task stats: {error_msg}")
-            raise HTTPException(status_code=500, detail=error_msg)
-
-        data = response["data"]
-        # Worker returns {"total": n, "1": n, "2": n, ...}; split total out and
-        # coerce the per-status keys to ints for the typed response.
-        by_status = {int(k): v for k, v in data.items() if k != "total"}
-        return TaskStatsResponse(total=data["total"], by_status=by_status)
-
-    except HTTPException:
-        raise
-    except TimeoutError:
-        logger.error("Timeout waiting for Tasks service response")
-        raise HTTPException(status_code=504, detail="Tasks service timeout")
-    except Exception as e:
-        logger.error(f"Error getting task stats: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    # The worker answers {"total": n, "1": n, ...}: split the total out and
+    # coerce the per-status keys to ints for the typed response.
+    by_status = {int(key): value for key, value in counts.items() if key != "total"}
+    return TaskStatsResponse(total=counts["total"], by_status=by_status)
 
 
 @router.get("/{task_id}", response_model=TaskResponse)
-async def get_task(task_id: int) -> TaskResponse:
-    """
-    Get task by ID.
-
-    Sends command to Tasks microservice via RabbitMQ.
-    """
-    if not rabbitmq_client:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
-
+async def get_task(task_id: TaskId) -> TaskResponse:
+    """Get task by ID."""
     # Cache-aside: try the cache first
     if cache:
         cached = await cache.get_json(_task_key(task_id))
@@ -176,49 +150,21 @@ async def get_task(task_id: int) -> TaskResponse:
             logger.debug(f"Cache HIT for task {task_id}")
             return TaskResponse(**cached)
 
-    try:
-        # Cache miss -> send RPC command to Tasks service
-        response = await rabbitmq_client.call(
-            queue_name="tasks.commands", message={"command": "get_task", "data": {"id": task_id}}, timeout=RPC_TIMEOUT
-        )
+    result = TaskResponse(**(await bus.get(task_id)).model_dump())
 
-        # Check response
-        if not response.get("success"):
-            error_msg = response.get("error", "Task not found")
-            logger.warning(f"Task {task_id} not found")
-            raise HTTPException(status_code=404, detail=error_msg)
+    # Populate the cache for next time
+    if cache:
+        await cache.set_json(_task_key(task_id), result.model_dump(mode="json"), CACHE_TTL_TASK)
 
-        result = TaskResponse(**response["data"])
-
-        # Populate the cache for next time
-        if cache:
-            await cache.set_json(_task_key(task_id), result.model_dump(mode="json"), CACHE_TTL_TASK)
-
-        logger.debug(f"Cache MISS for task {task_id}, served from RPC")
-        return result
-
-    except HTTPException:
-        raise
-    except TimeoutError:
-        logger.error("Timeout waiting for Tasks service response")
-        raise HTTPException(status_code=504, detail="Tasks service timeout")
-    except Exception as e:
-        logger.error(f"Error getting task {task_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    logger.debug(f"Cache MISS for task {task_id}, served from RPC")
+    return result
 
 
 @router.get("", response_model=TaskListResponse)
 async def list_tasks(
     limit: Annotated[int, Query(ge=1, le=100)] = 10, offset: Annotated[int, Query(ge=0)] = 0
 ) -> TaskListResponse:
-    """
-    List tasks with pagination.
-
-    Sends command to Tasks microservice via RabbitMQ.
-    """
-    if not rabbitmq_client:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
-
+    """List tasks with pagination."""
     # Cache-aside with a short TTL. List pages are also invalidated on every
     # task write (create/update/delete drop all `tasks:list:*` keys), so the UI
     # sees changes immediately; the TTL is just a backstop.
@@ -228,136 +174,60 @@ async def list_tasks(
             logger.debug(f"Cache HIT for tasks list (limit={limit}, offset={offset})")
             return TaskListResponse(**cached)
 
-    try:
-        # Send RPC command to Tasks service
-        response = await rabbitmq_client.call(
-            queue_name="tasks.commands",
-            message={"command": "list_tasks", "data": {"limit": limit, "offset": offset}},
-            timeout=RPC_TIMEOUT,
-        )
+    page = await bus.list_tasks(limit=limit, offset=offset)
 
-        # Check response
-        if not response.get("success"):
-            error_msg = response.get("error", "Unknown error")
-            logger.error(f"Failed to list tasks: {error_msg}")
-            raise HTTPException(status_code=500, detail=error_msg)
+    # `total` comes from the contract, which requires it. It used to fall back
+    # to the length of the page, which quietly turned the last page into the
+    # whole table.
+    result = TaskListResponse(
+        tasks=[TaskResponse(**task.model_dump()) for task in page.tasks],
+        total=page.total,
+        limit=limit,
+        offset=offset,
+    )
 
-        data = response["data"]
-        tasks = [TaskResponse(**task) for task in data["tasks"]]
+    # Populate the cache with a short TTL
+    if cache:
+        await cache.set_json(_tasks_list_key(limit, offset), result.model_dump(mode="json"), CACHE_TTL_TASKS_LIST)
 
-        result = TaskListResponse(tasks=tasks, total=data.get("total", len(tasks)), limit=limit, offset=offset)
-
-        # Populate the cache with a short TTL
-        if cache:
-            await cache.set_json(
-                _tasks_list_key(limit, offset),
-                result.model_dump(mode="json"),
-                CACHE_TTL_TASKS_LIST,
-            )
-
-        logger.debug(f"Listed {len(tasks)} tasks (limit={limit}, offset={offset})")
-        return result
-
-    except HTTPException:
-        raise
-    except TimeoutError:
-        logger.error("Timeout waiting for Tasks service response")
-        raise HTTPException(status_code=504, detail="Tasks service timeout")
-    except Exception as e:
-        logger.error(f"Error listing tasks: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    logger.debug(f"Listed {len(result.tasks)} tasks (limit={limit}, offset={offset})")
+    return result
 
 
 @router.put("/{task_id}", response_model=TaskResponse)
-async def update_task(task_id: int, task: TaskUpdate) -> TaskResponse:
-    """
-    Update task by ID.
+async def update_task(task_id: TaskId, task: TaskUpdate) -> TaskResponse:
+    """Update task by ID."""
+    # exclude_unset survives the trip: only the fields the caller named end up
+    # set on the contract, and only those are sent on.
+    update = TaskUpdatePayloadContract(**task.model_dump(exclude_unset=True))
+    updated = await bus.update(task_id, update)
 
-    Sends command to Tasks microservice via RabbitMQ.
-    """
-    if not rabbitmq_client:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+    await _invalidate_task_cache(task_id)
 
-    try:
-        # Send RPC command to Tasks service
-        response = await rabbitmq_client.call(
-            queue_name="tasks.commands",
-            message={"command": "update_task", "data": {"id": task_id, "update": task.model_dump(exclude_unset=True)}},
-            timeout=RPC_TIMEOUT,
-        )
+    result = TaskResponse(**updated.model_dump())
+    await _publish_event("task.updated", {"task": result.model_dump(mode="json")})
 
-        # Check response
-        if not response.get("success"):
-            error_msg = response.get("error", "Task not found")
-            logger.warning(f"Failed to update task {task_id}: {error_msg}")
-            raise HTTPException(status_code=404, detail=error_msg)
-
-        # Invalidate the cached task and all list pages so the next reads are fresh
-        if cache:
-            await cache.delete(_task_key(task_id))
-            await cache.delete_pattern("tasks:list:*")
-
-        updated = TaskResponse(**response["data"])
-        await _publish_event("task.updated", {"task": updated.model_dump(mode="json")})
-
-        logger.info(f"Task {task_id} updated successfully")
-        return updated
-
-    except HTTPException:
-        raise
-    except TimeoutError:
-        logger.error("Timeout waiting for Tasks service response")
-        raise HTTPException(status_code=504, detail="Tasks service timeout")
-    except Exception as e:
-        logger.error(f"Error updating task {task_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    logger.info(f"Task {task_id} updated successfully")
+    return result
 
 
 @router.delete("/{task_id}", status_code=204)
-async def delete_task(task_id: int) -> None:
-    """
-    Delete task by ID.
+async def delete_task(task_id: TaskId) -> None:
+    """Delete task by ID."""
+    await bus.delete(task_id)
 
-    Sends command to Tasks microservice via RabbitMQ.
-    """
-    if not rabbitmq_client:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+    await _invalidate_task_cache(task_id)
+    await _publish_event("task.deleted", {"id": task_id})
 
-    try:
-        # Send RPC command to Tasks service
-        response = await rabbitmq_client.call(
-            queue_name="tasks.commands",
-            message={"command": "delete_task", "data": {"id": task_id}},
-            timeout=RPC_TIMEOUT,
-        )
-
-        # Check response
-        if not response.get("success"):
-            error_msg = response.get("error", "Task not found")
-            logger.warning(f"Failed to delete task {task_id}: {error_msg}")
-            raise HTTPException(status_code=404, detail=error_msg)
-
-        # Invalidate the cached task and all list pages
-        if cache:
-            await cache.delete(_task_key(task_id))
-            await cache.delete_pattern("tasks:list:*")
-
-        await _publish_event("task.deleted", {"id": task_id})
-
-        logger.info(f"Task {task_id} deleted successfully")
-
-    except HTTPException:
-        raise
-    except TimeoutError:
-        logger.error("Timeout waiting for Tasks service response")
-        raise HTTPException(status_code=504, detail="Tasks service timeout")
-    except Exception as e:
-        logger.error(f"Error deleting task {task_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    logger.info(f"Task {task_id} deleted successfully")
 
 
 async def _resolve_tag_id(name: str) -> int:
-    """Return the id of the tag named ``name``, creating it if needed."""
+    """Return the id of the tag named ``name``, creating it if needed.
+
+    Still raw RPC and still raising HTTPException: this talks to the tags
+    service, which has no contracts yet. It moves when that vertical does.
+    """
     existing = await rabbitmq_client.call(
         queue_name=TAGS_QUEUE,
         message={"command": "get_tag_by_name", "data": {"name": name}},
@@ -376,80 +246,30 @@ async def _resolve_tag_id(name: str) -> int:
     return created["data"]["id"]
 
 
-async def _invalidate_task_cache(task_id: int) -> None:
-    """Drop the cached task and all list pages after a tag change."""
-    if cache:
-        await cache.delete(_task_key(task_id))
-        await cache.delete_pattern("tasks:list:*")
-
-
 @router.post("/{task_id}/tags", response_model=list[TaskTag])
-async def add_task_tag(task_id: int, payload: TaskTagAdd) -> list[TaskTag]:
+async def add_task_tag(task_id: TaskId, payload: TaskTagAdd) -> list[TaskTag]:
     """Attach a tag (by name, created on demand) to a task."""
-    if not rabbitmq_client:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
-
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="Tag name must not be blank")
 
-    try:
-        tag_id = await _resolve_tag_id(name)
+    tag_id = await _resolve_tag_id(name)
 
-        link = await rabbitmq_client.call(
-            queue_name="tasks.commands",
-            message={
-                "command": "add_task_tag",
-                "data": {"task_id": task_id, "tag_id": tag_id},
-            },
-            timeout=RPC_TIMEOUT,
-        )
-        if not link.get("success"):
-            error_msg = link.get("error", "Failed to add tag")
-            status = 404 if "not found" in error_msg.lower() else 400
-            raise HTTPException(status_code=status, detail=error_msg)
+    # A missing task now arrives as TaskNotFoundError and becomes a 404 in one
+    # place. This used to be decided by searching the worker's error text for
+    # the words "not found".
+    tags = await bus.add_tag(task_id, tag_id)
 
-        await _invalidate_task_cache(task_id)
-        await _publish_event("task.updated", {"id": task_id})
-        return [TaskTag(**t) for t in link["data"]["tags"]]
-
-    except HTTPException:
-        raise
-    except TimeoutError:
-        logger.error("Timeout waiting for service response")
-        raise HTTPException(status_code=504, detail="Service timeout")
-    except Exception as e:
-        logger.error(f"Error adding tag to task {task_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    await _invalidate_task_cache(task_id)
+    await _publish_event("task.updated", {"id": task_id})
+    return [TaskTag(**tag.model_dump()) for tag in tags.tags]
 
 
 @router.delete("/{task_id}/tags/{tag_id}", response_model=list[TaskTag])
-async def remove_task_tag(task_id: int, tag_id: int) -> list[TaskTag]:
+async def remove_task_tag(task_id: TaskId, tag_id: TagId) -> list[TaskTag]:
     """Detach a tag from a task."""
-    if not rabbitmq_client:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+    tags = await bus.remove_tag(task_id, tag_id)
 
-    try:
-        res = await rabbitmq_client.call(
-            queue_name="tasks.commands",
-            message={
-                "command": "remove_task_tag",
-                "data": {"task_id": task_id, "tag_id": tag_id},
-            },
-            timeout=RPC_TIMEOUT,
-        )
-        if not res.get("success"):
-            raise HTTPException(status_code=400, detail=res.get("error", "Failed to remove tag"))
-
-        await _invalidate_task_cache(task_id)
-        await _publish_event("task.updated", {"id": task_id})
-        return [TaskTag(**t) for t in res["data"]["tags"]]
-
-    except HTTPException:
-        raise
-    except TimeoutError:
-        logger.error("Timeout waiting for Tasks service response")
-        raise HTTPException(status_code=504, detail="Tasks service timeout")
-    except Exception as e:
-        logger.error(f"Error removing tag from task {task_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    await _invalidate_task_cache(task_id)
+    await _publish_event("task.updated", {"id": task_id})
+    return [TaskTag(**tag.model_dump()) for tag in tags.tags]

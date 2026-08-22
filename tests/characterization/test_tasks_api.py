@@ -5,6 +5,8 @@ turns red during the refactor, the refactor changed behaviour -- decide whether
 that was intended before touching the assertion.
 """
 
+from datetime import date
+
 from contracts import StatsContract, TaskContract, TaskListContract
 
 
@@ -123,3 +125,30 @@ async def test_unknown_field_in_request_totally_ignored(auth_client, trash):
     trash.append(task.id)
     assert task.title == "supertest"
     assert task.creator_id == 1
+
+
+async def test_task_with_deadlines_round_trips(auth_client, trash):
+    """A task created with deadlines comes back with those deadlines.
+
+    Not a characterization test: today this answers 500, and pinning that would
+    enshrine a bug. The gateway dumps the request schema in python mode, so the
+    deadlines reach json.dumps as date objects and the transport refuses them.
+    The UI never sends deadlines, which is why nobody noticed.
+    """
+    payload = {
+        "title": "deadline probe",
+        "creator_id": 1,
+        "deadline_start": "2026-09-01",
+        "deadline_end": "2026-09-30",
+    }
+    response = await auth_client.post("/tasks", json=payload)
+    assert response.status_code == 201, response.text
+    task = TaskContract.model_validate(response.json())
+    trash.append(task.id)
+    assert task.deadline_start == date(2026, 9, 1)
+    assert task.deadline_end == date(2026, 9, 30)
+
+    # And it survives a re-read, so the dates were stored rather than echoed.
+    reread = await auth_client.get(f"/tasks/{task.id}")
+    assert reread.status_code == 200
+    assert TaskContract.model_validate(reread.json()).deadline_end == date(2026, 9, 30)
