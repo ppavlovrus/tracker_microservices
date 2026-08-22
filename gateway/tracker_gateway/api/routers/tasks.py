@@ -101,20 +101,22 @@ async def delete_task(task_id: TaskId, service: TasksServiceDep) -> None:
     await service.delete(task_id)
 
 
-async def _resolve_tag_id(rabbitmq_client, name: str) -> int:
-    """Return the id of the tag named ``name``, creating it if needed.
+async def _find_tag_id(rabbitmq_client, name: str) -> int | None:
+    """Return the id of the tag named ``name``, or None if there is no such tag.
 
-    Still raw RPC and still raising HTTPException: this talks to the tags
-    service, which has no contracts yet. It moves when that vertical does.
+    Still raw RPC: this talks to the tags service, which has no contracts yet.
+    It moves when that vertical does.
     """
-    existing = await rabbitmq_client.call(
+    answer = await rabbitmq_client.call(
         queue_name=TAGS_QUEUE,
         message={"command": "get_tag_by_name", "data": {"name": name}},
         timeout=RPC_TIMEOUT,
     )
-    if existing.get("success"):
-        return existing["data"]["id"]
+    return answer["data"]["id"] if answer.get("success") else None
 
+
+async def _create_tag(rabbitmq_client, name: str) -> int:
+    """Create a tag named ``name`` and return its id."""
     created = await rabbitmq_client.call(
         queue_name=TAGS_QUEUE,
         message={"command": "create_tag", "data": {"name": name}},
@@ -134,7 +136,20 @@ async def add_task_tag(
     if not name:
         raise HTTPException(status_code=422, detail="Tag name must not be blank")
 
-    tag_id = await _resolve_tag_id(rabbitmq, name)
+    tag_id = await _find_tag_id(rabbitmq, name)
+
+    if tag_id is None:
+        # Creating the tag is a write to a second service, and this endpoint
+        # has no way to undo it. Do not make that write until the task is known
+        # to exist, or tagging a task that is gone leaves behind a tag nothing
+        # points at. The check is a cache-aside read, so it is usually free.
+        #
+        # It narrows the window rather than closing it: a task deleted between
+        # this read and the link below still orphans one tag row. Closing it
+        # properly needs the two writes behind one command, which is work for
+        # the tags vertical.
+        await service.get(task_id)
+        tag_id = await _create_tag(rabbitmq, name)
 
     # A missing task arrives as TaskNotFoundError and becomes a 404 in one
     # place. This used to be decided by searching the worker's error text for
