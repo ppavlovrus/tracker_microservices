@@ -22,6 +22,7 @@ from .api.routers import (
     users,
     web,
 )
+from .broker.tasks_client import TasksBusClient
 from .cache import Cache
 from .chat import ChatHub
 from .config import (
@@ -122,6 +123,11 @@ async def lifespan(app: FastAPI):
         await rabbitmq_client.connect()
         await rabbitmq_client.setup_rpc_client()
 
+        # Collaborators the tasks vertical asks for by dependency rather than
+        # by reaching into this module.
+        app.state.rabbitmq = rabbitmq_client
+        app.state.tasks_bus = TasksBusClient(rabbitmq_client)
+
         # Initialize Redis cache (best-effort, never blocks startup)
         cache = Cache(redis_url=REDIS_URL, enabled=CACHE_ENABLED)
         await cache.connect()
@@ -145,7 +151,6 @@ async def lifespan(app: FastAPI):
         await session_store.connect()
 
         # Set client in routers
-        tasks.set_rabbitmq_client(rabbitmq_client)
         users.set_rabbitmq_client(rabbitmq_client)
         comments.set_rabbitmq_client(rabbitmq_client)
         tags.set_rabbitmq_client(rabbitmq_client)
@@ -186,10 +191,10 @@ async def lifespan(app: FastAPI):
             events_listener_task = asyncio.create_task(events_hub.run_listener())
             sse.set_events_hub(events_hub)
             sse.set_session_store(session_store)
-            tasks.set_events_hub(events_hub)
+            app.state.events_hub = events_hub
 
         # Wire cache into the routers that use it
-        tasks.set_cache(cache)
+        app.state.cache = cache
         tags.set_cache(cache)
 
         logger.info("Gateway service started successfully")
@@ -247,6 +252,14 @@ app = FastAPI(
 # Domain errors become HTTP statuses here and nowhere else. Registering the
 # base class is enough: Starlette looks a handler up along type(exc).__mro__.
 register_error_handlers(app)
+
+# Filled in by the lifespan. Declared here so a dependency never meets a
+# missing attribute, and so the pre-startup values are honest: no connection,
+# no cache, nobody to notify.
+app.state.rabbitmq = None
+app.state.tasks_bus = TasksBusClient(None)
+app.state.cache = None
+app.state.events_hub = None
 
 
 @app.middleware("http")
