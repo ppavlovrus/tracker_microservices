@@ -3,5 +3,12 @@ venv/
 .git/
 .idea/
 .DS_Store
-*.egg-info/
-__pycache__/
+
+# Without a leading **, Docker matches a pattern only at the context root,
+# so per-component caches and build artifacts kept reaching the build.
+**/__pycache__/
+**/*.egg-info/
+**/build/
+**/dist/
+.pytest_cache/
+.ruff_cache/
