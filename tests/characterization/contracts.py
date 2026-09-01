@@ -42,6 +42,37 @@ class TaskListContract(Contract):
     offset: int
 
 
+class UserContract(Contract):
+    """A user as the /users endpoints answer it. ``extra="forbid"`` is the
+    assertion that matters most here: password_hash showing up in a response
+    would fail validation instead of passing silently."""
+
+    id: int
+    username: str
+    email: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserListContract(Contract):
+    users: list[UserContract]
+    total: int
+    limit: int
+    offset: int
+
+
+class UserPublicContract(Contract):
+    """The trimmed user inside a login answer."""
+
+    id: int
+    username: str
+    email: str | None
+
+
+class LoginResponseContract(Contract):
+    user: UserPublicContract
+
+
 class StatsContract(Contract):
     total: int
     # Keys are strings on purpose: the gateway builds dict[int, int], but JSON has

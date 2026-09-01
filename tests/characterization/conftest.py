@@ -1,8 +1,9 @@
 import os
+from uuid import uuid4
 
 import httpx
 import pytest
-from contracts import TaskContract
+from contracts import TaskContract, UserContract
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
@@ -42,6 +43,36 @@ async def make_task(auth_client):
 
     for task_id in created_ids:
         await auth_client.delete(f"/tasks/{task_id}")
+
+
+@pytest.fixture
+async def make_user(auth_client):
+    """Create users with unique credentials and delete every one of them after.
+
+    Returns ``(user, payload)``: the payload keeps the plaintext password so a
+    test can log in as the user it just created. Credentials are randomised
+    because username and email are unique columns -- a fixed name would make
+    the second run of a failed test collide with the leftovers of the first.
+    """
+    created_ids = []
+
+    async def _make(**overrides):
+        suffix = uuid4().hex[:10]
+        payload = {
+            "username": f"probe_{suffix}",
+            "email": f"probe_{suffix}@example.com",
+            "password": "probe-pass-123",
+        } | overrides
+        response = await auth_client.post("/users", json=payload)
+        assert response.status_code == 201, f"setup failed: {response.text}"
+        user = UserContract.model_validate(response.json())
+        created_ids.append(user.id)
+        return user, payload
+
+    yield _make
+
+    for user_id in created_ids:
+        await auth_client.delete(f"/users/{user_id}")
 
 
 @pytest.fixture
