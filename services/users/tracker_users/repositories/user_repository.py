@@ -25,6 +25,11 @@ class UserRepository:
         """
         Get user by ID.
 
+        Selects exactly the public columns: the row is validated against
+        ``UserData`` on the way out, and ``extra="forbid"`` makes any extra
+        column -- above all ``password_hash`` -- a validation failure rather
+        than a leak.
+
         Args:
             id: User ID
 
@@ -34,8 +39,7 @@ class UserRepository:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT id, username, email, password_hash, 
-                       created_at, updated_at
+                SELECT id, username, email, created_at, updated_at
                 FROM "user"
                 WHERE id = $1
                 """,
@@ -52,10 +56,9 @@ class UserRepository:
         """
         Get user by username (used by the login flow).
 
-        Selects only columns that exist on the ``user`` table -- notably it
-        does NOT touch ``updated_at`` (the table has ``last_login`` instead),
-        so it is safe regardless of the date-column mismatch in the other
-        queries here.
+        One of the credential lookups: unlike the public queries above it
+        returns ``password_hash``, because verifying it is the caller's whole
+        purpose. The row feeds the ``UserAccount`` contract.
 
         Args:
             username: Username to look up
@@ -174,8 +177,6 @@ class UserRepository:
             User data as dict or None if not found
         """
         async with self.pool.acquire() as conn:
-            # The table has last_login, not updated_at (tech-debt #11); select
-            # only real columns so this lookup works at runtime.
             row = await conn.fetchrow(
                 """
                 SELECT id, username, email, password_hash, yandex_id,
@@ -206,8 +207,7 @@ class UserRepository:
                 """
                 INSERT INTO "user" (username, email, password_hash)
                 VALUES ($1, $2, $3)
-                RETURNING id, username, email, password_hash,
-                          created_at, updated_at
+                RETURNING id, username, email, created_at, updated_at
                 """,
                 data["username"],
                 data["email"],
@@ -255,8 +255,7 @@ class UserRepository:
             UPDATE "user"
             SET {", ".join(set_clauses)}
             WHERE id = ${param_index}
-            RETURNING id, username, email, password_hash,
-                      created_at, updated_at
+            RETURNING id, username, email, created_at, updated_at
         """
 
         async with self.pool.acquire() as conn:
@@ -306,8 +305,7 @@ class UserRepository:
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT id, username, email, password_hash,
-                       created_at, updated_at
+                SELECT id, username, email, created_at, updated_at
                 FROM "user"
                 ORDER BY created_at DESC
                 LIMIT $1 OFFSET $2

@@ -4,9 +4,24 @@ import asyncio
 import logging
 import signal
 import sys
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import asyncpg
 from aio_pika import IncomingMessage
+from pydantic import BaseModel, ValidationError
+from task_tracker_common.contracts.commands import (
+    UserCommand,
+    UserCreateContract,
+    UserDeleteContract,
+    UserGetByEmailContract,
+    UserGetByIdContract,
+    UserGetByUsernameContract,
+    UserListContract,
+    UserUpdateContract,
+    UserUpsertYandexContract,
+)
+from task_tracker_common.contracts.responses import ErrorCode, rpc_error
 from task_tracker_common.messaging import RabbitMQClient
 
 from .config import (
@@ -33,8 +48,32 @@ logger = logging.getLogger(__name__)
 # Global instances
 db_pool: asyncpg.Pool = None
 rabbitmq_client: RabbitMQClient = None
-user_handlers: UserHandlers = None
 shutdown_event = None
+
+# Command name -> (payload contract, handler). Filled in at startup, once the
+# handlers exist.
+Handler = Callable[[BaseModel], Awaitable[dict[str, Any]]]
+command_table: dict[str, tuple[type[BaseModel], Handler]] = {}
+
+
+def build_command_table(handlers: UserHandlers) -> dict[str, tuple[type[BaseModel], Handler]]:
+    """Map every command this service answers to its payload contract.
+
+    A table rather than an if/elif ladder: adding a command means adding a row,
+    the enum keeps the names from drifting apart between the two sides of the
+    bus, and every payload passes through a contract before a handler sees it,
+    in one place instead of eight.
+    """
+    return {
+        UserCommand.CREATE: (UserCreateContract, handlers.handle_create_user),
+        UserCommand.GET: (UserGetByIdContract, handlers.handle_get_user),
+        UserCommand.GET_BY_EMAIL: (UserGetByEmailContract, handlers.handle_get_user_by_email),
+        UserCommand.GET_BY_USERNAME: (UserGetByUsernameContract, handlers.handle_get_user_by_username),
+        UserCommand.UPSERT: (UserUpsertYandexContract, handlers.handle_upsert_yandex_user),
+        UserCommand.UPDATE: (UserUpdateContract, handlers.handle_update_user),
+        UserCommand.DELETE: (UserDeleteContract, handlers.handle_delete_user),
+        UserCommand.LIST: (UserListContract, handlers.handle_list_users),
+    }
 
 
 async def create_db_pool() -> asyncpg.Pool:
@@ -59,58 +98,44 @@ async def create_db_pool() -> asyncpg.Pool:
 
 
 async def handle_command(payload: dict, message: IncomingMessage) -> dict:
-    """
-    Handle incoming command from RabbitMQ.
+    """Validate an incoming command and route it to its handler.
 
-    Args:
-        payload: Command payload
-        message: RabbitMQ message
-
-    Returns:
-        Response dict
+    Three failures are told apart here, and each gets its own code, because the
+    caller has to react to them differently: a command this service does not
+    answer, a payload that does not satisfy the contract, and a handler that
+    blew up.
     """
     command = payload.get("command")
     data = payload.get("data", {})
 
+    entry = command_table.get(command)
+    if entry is None:
+        logger.warning(f"Unknown command: {command}")
+        return rpc_error(ErrorCode.VALIDATION_ERROR, f"Unknown command: {command}", "UnknownCommand")
+
+    contract, handler = entry
+
+    try:
+        request = contract.model_validate(data)
+    except ValidationError as e:
+        # The violations go to the log, not onto the bus: a payload that fails
+        # the contract is a bug in whoever sent it, and the field paths would
+        # otherwise ride all the way out to an HTTP client.
+        logger.warning(f"Rejected {command}: {e}")
+        return rpc_error(ErrorCode.VALIDATION_ERROR, f"{e.error_count()} contract violation(s)", "ValidationError")
+
     logger.debug(f"Handling command: {command}")
 
     try:
-        if command == "create_user":
-            return await user_handlers.handle_create_user(data)
-
-        elif command == "get_user":
-            return await user_handlers.handle_get_user(data)
-
-        elif command == "get_user_by_email":
-            return await user_handlers.handle_get_user_by_email(data)
-
-        elif command == "get_user_by_username":
-            return await user_handlers.handle_get_user_by_username(data)
-
-        elif command == "upsert_yandex_user":
-            return await user_handlers.handle_upsert_yandex_user(data)
-
-        elif command == "update_user":
-            return await user_handlers.handle_update_user(data)
-
-        elif command == "delete_user":
-            return await user_handlers.handle_delete_user(data)
-
-        elif command == "list_users":
-            return await user_handlers.handle_list_users(data)
-
-        else:
-            logger.warning(f"Unknown command: {command}")
-            return {"success": False, "error": f"Unknown command: {command}", "error_type": "UnknownCommand"}
-
+        return await handler(request)
     except Exception as e:
         logger.error(f"Error handling command {command}: {e}", exc_info=True)
-        return {"success": False, "error": str(e), "error_type": type(e).__name__}
+        return rpc_error(ErrorCode.INTERNAL, str(e), type(e).__name__)
 
 
 async def startup():
     """Initialize service components."""
-    global db_pool, rabbitmq_client, user_handlers
+    global db_pool, rabbitmq_client
 
     logger.info("=" * 60)
     logger.info(f"Starting {SERVICE_NAME}...")
@@ -123,8 +148,9 @@ async def startup():
         # Initialize repository and handlers
         user_repository = UserRepository(db_pool)
         user_handlers = UserHandlers(user_repository)
+        command_table.update(build_command_table(user_handlers))
 
-        logger.info("Repository and handlers initialized")
+        logger.info(f"Repository and handlers initialized ({len(command_table)} commands)")
 
         # Initialize RabbitMQ client
         rabbitmq_client = RabbitMQClient(amqp_url=AMQP_URL, service_name=SERVICE_NAME)

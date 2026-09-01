@@ -107,3 +107,56 @@ class TaskListContract(Contract):
 
 class TaskStatsContract(Contract):
     """``task_stats`` takes no arguments: the payload is empty."""
+
+
+# -- users ------------------------------------------------------------------
+#
+# Field bounds mirror the columns (username 64, email 255), not the HTTP
+# schemas: the gateway may well demand more of its callers, but the bus
+# contract describes what the worker can store.
+
+
+class UserCreateContract(Contract):
+    username: str = Field(..., min_length=1, max_length=64)
+    email: str = Field(..., min_length=3, max_length=255)
+    # Always a hash by the time it reaches the bus: plaintext passwords do
+    # not leave the gateway.
+    password_hash: str
+
+
+class UserUpdatePayloadContract(Contract):
+    username: str | None = Field(None, min_length=1, max_length=64)
+    email: str | None = Field(None, min_length=3, max_length=255)
+    password_hash: str | None = None
+
+
+class UserUpdateContract(Contract):
+    id: int = Field(..., gt=0)
+    update: UserUpdatePayloadContract
+
+
+class UserDeleteContract(Contract):
+    id: int = Field(..., gt=0)
+
+
+class UserGetByIdContract(Contract):
+    id: int = Field(..., gt=0)
+
+
+class UserGetByUsernameContract(Contract):
+    username: str = Field(..., min_length=1, max_length=64)
+
+
+class UserGetByEmailContract(Contract):
+    email: str = Field(..., min_length=1, max_length=255)
+
+
+class UserUpsertYandexContract(Contract):
+    yandex_id: str = Field(..., min_length=1, max_length=64)
+    login: str = Field(..., min_length=1, max_length=64)
+    email: str = Field(..., min_length=1, max_length=255)
+
+
+class UserListContract(Contract):
+    limit: int = Field(..., ge=1, le=100)
+    offset: int = Field(..., ge=0)

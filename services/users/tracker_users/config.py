@@ -2,6 +2,8 @@
 
 import os
 
+from task_tracker_common.contracts.queues import Queue
+
 # RabbitMQ settings
 AMQP_URL: str = os.getenv("AMQP_URL", "amqp://guest:guest@localhost/")
 
@@ -18,7 +20,9 @@ DB_POOL_MAX_SIZE: int = int(os.getenv("DB_POOL_MAX_SIZE", "20"))
 
 # Service settings
 SERVICE_NAME: str = "users-service"
-QUEUE_NAME: str = "users.commands"
+# The queue name is protocol, not deployment: both sides read it from the
+# same enum so a rename cannot be applied to one half of the bus.
+QUEUE_NAME: str = Queue.USERS
 PREFETCH_COUNT: int = int(os.getenv("PREFETCH_COUNT", "10"))
 
 # Logging

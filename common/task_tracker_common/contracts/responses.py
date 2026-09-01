@@ -10,6 +10,7 @@ from .base import Contract
 class ErrorCode(StrEnum):
     NOT_FOUND = "not_found"
     VALIDATION_ERROR = "validation_error"
+    CONFLICT = "conflict"
     INTERNAL = "internal"
 
 
@@ -63,6 +64,49 @@ class TaskTags(Contract):
 
     task_id: int
     tags: list[TaskTag]
+
+
+class UserData(Contract):
+    """A user as the rest of the platform is allowed to see one.
+
+    No ``password_hash`` field, on purpose: with ``extra="forbid"`` a worker
+    that leaks the hash into a public answer fails validation inside the
+    worker instead of relying on the gateway to remember to strip it.
+    """
+
+    id: int
+    username: str
+    email: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserAccount(Contract):
+    """The auth flows' view of a user: carries the credentials.
+
+    Only two commands may answer with this -- the login lookup and the OAuth
+    upsert -- and their payloads exist to be verified against, never to be
+    forwarded. ``password_hash`` is nullable because OAuth-backed users have
+    no local password.
+    """
+
+    id: int
+    username: str
+    email: str
+    password_hash: str | None
+    yandex_id: str | None = None
+    created_at: datetime
+    last_login: datetime | None = None
+
+
+class UserDelete(Contract):
+    id: int
+    deleted: Literal[True]
+
+
+class UserList(Contract):
+    total: int
+    users: list[UserData]
 
 
 # ``task_stats`` answers with {"total": n, "1": n, "2": n, "3": n}: a total plus one

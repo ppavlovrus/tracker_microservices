@@ -1,333 +1,198 @@
-"""User command handlers for RabbitMQ messages."""
+"""User command handlers for RabbitMQ messages.
+
+A handler receives a command contract that the dispatcher has already
+validated, and answers with an envelope built from the shared response
+contracts. The raw payload dict and hand-written ``{"success": ...}``
+literals are gone, and so is the field-by-field date serialisation -- the
+response contract owns the shape and ``rpc_ok`` dumps it in JSON mode.
+
+Two answer shapes leave this service. ``UserData`` is the public one and has
+no ``password_hash`` field at all, so a public query that accidentally
+selects the hash fails validation here rather than leaking. ``UserAccount``
+carries the credentials and answers only the auth lookups.
+
+Uniqueness is not pre-checked with a SELECT: two concurrent creates would
+both pass such a check and one would still hit the constraint. The database
+is the only judge; ``UniqueViolationError`` is caught and translated instead.
+"""
 
 import logging
 from typing import Any
 
 import asyncpg
+from task_tracker_common.contracts.commands import (
+    UserCreateContract,
+    UserDeleteContract,
+    UserGetByEmailContract,
+    UserGetByIdContract,
+    UserGetByUsernameContract,
+    UserListContract,
+    UserUpdateContract,
+    UserUpsertYandexContract,
+)
+from task_tracker_common.contracts.responses import (
+    ErrorCode,
+    UserAccount,
+    UserData,
+    UserDelete,
+    UserList,
+    rpc_error,
+    rpc_ok,
+)
 
 from ..repositories.user_repository import UserRepository
 
 logger = logging.getLogger(__name__)
 
+# The gateway turns this into the 404 body, so the wording is observable.
+USER_NOT_FOUND = "User not found"
 
-def _serialize_dates(user: dict[str, Any]) -> dict[str, Any]:
-    """Convert timestamp fields to ISO strings for JSON serialization."""
-    for field in ("created_at", "updated_at", "last_login"):
-        if user.get(field):
-            user[field] = user[field].isoformat()
-    return user
+Envelope = dict[str, Any]
+
+
+def _conflict(exc: asyncpg.UniqueViolationError) -> Envelope:
+    """Translate a unique-constraint violation into a CONFLICT envelope.
+
+    The constraint name says which field collided; ``error_type`` carries it
+    as the machine-readable half so the gateway can pick the matching domain
+    error without parsing the message.
+    """
+    if exc.constraint_name == "user_username_key":
+        return rpc_error(ErrorCode.CONFLICT, "Username already exists", "username")
+    return rpc_error(ErrorCode.CONFLICT, "Email already exists", "email")
 
 
 class UserHandlers:
     """Handlers for user-related commands."""
 
     def __init__(self, repository: UserRepository):
-        """
-        Initialize handlers.
-
-        Args:
-            repository: UserRepository instance
-        """
+        """Initialize handlers with the repository they read and write through."""
         self.repository = repository
 
-    async def handle_create_user(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle create_user command.
-
-        Args:
-            data: User data from command
-
-        Returns:
-            Response with created user or error
-        """
+    async def handle_create_user(self, command: UserCreateContract) -> Envelope:
+        """Handle ``create_user``: insert the row, answer with the stored user."""
         try:
-            # Check if email already exists
-            existing_user = await self.repository.get_by_email(data.get("email"))
-            if existing_user:
-                return {"success": False, "error": "Email already exists"}
+            user = await self.repository.create(command.model_dump())
+        except asyncpg.UniqueViolationError as e:
+            logger.warning(f"User creation conflict: {e.constraint_name}")
+            return _conflict(e)
 
-            # Create user
-            user = await self.repository.create(data)
+        logger.info(f"User created successfully: ID={user['id']}")
+        return rpc_ok(UserData, user)
 
-            # Convert timestamps to strings for JSON serialization
-            if user.get("created_at"):
-                user["created_at"] = user["created_at"].isoformat()
-            if user.get("updated_at"):
-                user["updated_at"] = user["updated_at"].isoformat()
+    async def handle_get_user(self, command: UserGetByIdContract) -> Envelope:
+        """Handle ``get_user``: one public user row."""
+        user = await self.repository.get_by_id(command.id)
 
-            logger.info(f"User created successfully: ID={user['id']}")
+        if user is None:
+            logger.warning(f"User not found: ID={command.id}")
+            return rpc_error(ErrorCode.NOT_FOUND, USER_NOT_FOUND)
 
-            return {"success": True, "data": user}
+        logger.debug(f"User retrieved: ID={command.id}")
+        return rpc_ok(UserData, user)
 
-        except Exception as e:
-            logger.error(f"Error creating user: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+    async def handle_get_user_by_email(self, command: UserGetByEmailContract) -> Envelope:
+        """Handle ``get_user_by_email``: credential lookup by email."""
+        user = await self.repository.get_by_email(command.email)
 
-    async def handle_get_user(self, data: dict[str, Any]) -> dict[str, Any]:
+        if user is None:
+            return rpc_error(ErrorCode.NOT_FOUND, USER_NOT_FOUND)
+
+        logger.debug(f"User retrieved by email: {command.email}")
+        return rpc_ok(UserAccount, user)
+
+    async def handle_get_user_by_username(self, command: UserGetByUsernameContract) -> Envelope:
+        """Handle ``get_user_by_username``: the login lookup.
+
+        Answers with ``UserAccount`` -- including ``password_hash``, because
+        verifying it is the caller's whole purpose. The gateway is responsible
+        for never letting the hash travel further.
         """
-        Handle get_user command.
+        user = await self.repository.get_by_username(command.username)
 
-        Args:
-            data: Contains user ID
+        if user is None:
+            return rpc_error(ErrorCode.NOT_FOUND, USER_NOT_FOUND)
 
-        Returns:
-            Response with user data or error
-        """
-        try:
-            user_id = data.get("id")
+        logger.debug(f"User retrieved by username: {command.username}")
+        return rpc_ok(UserAccount, user)
 
-            if not user_id:
-                return {"success": False, "error": "User ID is required"}
-
-            user = await self.repository.get_by_id(user_id)
-
-            if not user:
-                return {"success": False, "error": "User not found"}
-
-            # Convert timestamps to strings for JSON
-            if user.get("created_at"):
-                user["created_at"] = user["created_at"].isoformat()
-            if user.get("updated_at"):
-                user["updated_at"] = user["updated_at"].isoformat()
-
-            logger.debug(f"User retrieved: ID={user_id}")
-
-            return {"success": True, "data": user}
-
-        except Exception as e:
-            logger.error(f"Error getting user: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
-
-    async def handle_get_user_by_email(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle get_user_by_email command.
-
-        Args:
-            data: Contains email
-
-        Returns:
-            Response with user data or error
-        """
-        try:
-            email = data.get("email")
-
-            if not email:
-                return {"success": False, "error": "Email is required"}
-
-            user = await self.repository.get_by_email(email)
-
-            if not user:
-                return {"success": False, "error": "User not found"}
-
-            # Convert timestamps to strings for JSON
-            if user.get("created_at"):
-                user["created_at"] = user["created_at"].isoformat()
-            if user.get("updated_at"):
-                user["updated_at"] = user["updated_at"].isoformat()
-
-            logger.debug(f"User retrieved by email: {email}")
-
-            return {"success": True, "data": user}
-
-        except Exception as e:
-            logger.error(f"Error getting user by email: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
-
-    async def handle_get_user_by_username(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle get_user_by_username command (login lookup).
-
-        Returns the full user record including ``password_hash`` so the gateway
-        can verify the password. The gateway is responsible for never leaking
-        the hash back to clients.
-
-        Args:
-            data: Contains username
-
-        Returns:
-            Response with user data or error
-        """
-        try:
-            username = data.get("username")
-
-            if not username:
-                return {"success": False, "error": "Username is required"}
-
-            user = await self.repository.get_by_username(username)
-
-            if not user:
-                return {"success": False, "error": "User not found"}
-
-            # Convert timestamps to strings for JSON
-            if user.get("created_at"):
-                user["created_at"] = user["created_at"].isoformat()
-            if user.get("last_login"):
-                user["last_login"] = user["last_login"].isoformat()
-
-            logger.debug(f"User retrieved by username: {username}")
-
-            return {"success": True, "data": user}
-
-        except Exception as e:
-            logger.error(f"Error getting user by username: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
-
-    async def handle_upsert_yandex_user(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle upsert_yandex_user command (Yandex OAuth login).
+    async def handle_upsert_yandex_user(self, command: UserUpsertYandexContract) -> Envelope:
+        """Handle ``upsert_yandex_user`` (Yandex OAuth login).
 
         Resolution order:
         1. A user already linked to this Yandex id -- return it.
         2. A user with the same email -- link the Yandex id to it. Safe because
            Yandex only reports emails it has verified itself.
         3. Otherwise create a new user without a local password.
-
-        Args:
-            data: Contains yandex_id, email and login from the Yandex profile
-
-        Returns:
-            Response with the resolved user or error
         """
+        user = await self.repository.get_by_yandex_id(command.yandex_id)
+        if user:
+            logger.debug(f"OAuth login: existing user ID={user['id']}")
+            return rpc_ok(UserAccount, user)
+
+        existing = await self.repository.get_by_email(command.email)
+        if existing:
+            user = await self.repository.link_yandex_id(existing["id"], command.yandex_id)
+            if user is None:
+                return rpc_error(ErrorCode.NOT_FOUND, USER_NOT_FOUND)
+            logger.info(f"OAuth login: linked yandex_id to user ID={user['id']}")
+            return rpc_ok(UserAccount, user)
+
         try:
-            yandex_id = data.get("yandex_id")
-            email = data.get("email")
-            login = data.get("login")
+            user = await self.repository.create_oauth(command.login, command.email, command.yandex_id)
+        except asyncpg.UniqueViolationError:
+            # The Yandex login is taken as a local username; fall back to a
+            # deterministic unique name derived from the Yandex id.
+            fallback = f"{command.login}_ya{command.yandex_id}"[:64]
+            user = await self.repository.create_oauth(fallback, command.email, command.yandex_id)
 
-            if not yandex_id or not email or not login:
-                return {"success": False, "error": "yandex_id, email and login are required"}
+        logger.info(f"OAuth login: created user ID={user['id']}")
+        return rpc_ok(UserAccount, user)
 
-            user = await self.repository.get_by_yandex_id(yandex_id)
-            if user:
-                logger.debug(f"OAuth login: existing user ID={user['id']}")
-                return {"success": True, "data": _serialize_dates(user)}
+    async def handle_update_user(self, command: UserUpdateContract) -> Envelope:
+        """Handle ``update_user``: write the fields the caller actually set.
 
-            existing = await self.repository.get_by_email(email)
-            if existing:
-                user = await self.repository.link_yandex_id(existing["id"], yandex_id)
-                if user is None:
-                    return {"success": False, "error": "User not found"}
-                logger.info(f"OAuth login: linked yandex_id to user ID={user['id']}")
-                return {"success": True, "data": _serialize_dates(user)}
-
-            try:
-                user = await self.repository.create_oauth(login, email, yandex_id)
-            except asyncpg.UniqueViolationError:
-                # The Yandex login is taken as a local username; fall back to a
-                # deterministic unique name derived from the Yandex id.
-                fallback = f"{login}_ya{yandex_id}"[:64]
-                user = await self.repository.create_oauth(fallback, email, yandex_id)
-
-            logger.info(f"OAuth login: created user ID={user['id']}")
-            return {"success": True, "data": _serialize_dates(user)}
-
-        except Exception as e:
-            logger.error(f"Error upserting yandex user: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
-
-    async def handle_update_user(self, data: dict[str, Any]) -> dict[str, Any]:
+        ``exclude_unset`` is what makes this a partial update: a field the
+        caller never mentioned is absent from the dump, so the repository's
+        dynamic UPDATE leaves the column alone.
         """
-        Handle update_user command.
+        update = command.update.model_dump(exclude_unset=True)
 
-        Args:
-            data: Contains user ID and update fields
+        if not update:
+            return rpc_error(ErrorCode.VALIDATION_ERROR, "No fields to update")
 
-        Returns:
-            Response with updated user or error
-        """
         try:
-            user_id = data.get("id")
-            update_data = data.get("update", {})
+            user = await self.repository.update(command.id, update)
+        except asyncpg.UniqueViolationError as e:
+            logger.warning(f"User update conflict: ID={command.id}, {e.constraint_name}")
+            return _conflict(e)
 
-            if not user_id:
-                return {"success": False, "error": "User ID is required"}
+        if user is None:
+            logger.warning(f"User not found for update: ID={command.id}")
+            return rpc_error(ErrorCode.NOT_FOUND, USER_NOT_FOUND)
 
-            if not update_data:
-                return {"success": False, "error": "No fields to update"}
+        logger.info(f"User updated successfully: ID={command.id}")
+        return rpc_ok(UserData, user)
 
-            # If updating email, check if it's already taken
-            if "email" in update_data:
-                existing_user = await self.repository.get_by_email(update_data["email"])
-                if existing_user and existing_user["id"] != user_id:
-                    return {"success": False, "error": "Email already exists"}
+    async def handle_delete_user(self, command: UserDeleteContract) -> Envelope:
+        """Handle ``delete_user``: report whether the row was there to delete."""
+        deleted = await self.repository.delete(command.id)
 
-            # Update user
-            user = await self.repository.update(user_id, update_data)
+        if not deleted:
+            logger.warning(f"User not found for deletion: ID={command.id}")
+            return rpc_error(ErrorCode.NOT_FOUND, USER_NOT_FOUND)
 
-            if not user:
-                return {"success": False, "error": "User not found"}
+        logger.info(f"User deleted successfully: ID={command.id}")
+        return rpc_ok(UserDelete, {"id": command.id, "deleted": True})
 
-            # Convert timestamps to strings for JSON
-            if user.get("created_at"):
-                user["created_at"] = user["created_at"].isoformat()
-            if user.get("updated_at"):
-                user["updated_at"] = user["updated_at"].isoformat()
+    async def handle_list_users(self, command: UserListContract) -> Envelope:
+        """Handle ``list_users``: one page plus the count over the whole table.
 
-            logger.info(f"User updated successfully: ID={user_id}")
-
-            return {"success": True, "data": user}
-
-        except Exception as e:
-            logger.error(f"Error updating user: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
-
-    async def handle_delete_user(self, data: dict[str, Any]) -> dict[str, Any]:
+        ``total`` is deliberately not ``len(users)``: the caller pages on it,
+        and a page length would make the last page look like the whole set.
         """
-        Handle delete_user command.
+        users = await self.repository.get_all(limit=command.limit, offset=command.offset)
+        total = await self.repository.count_all()
 
-        Args:
-            data: Contains user ID
-
-        Returns:
-            Response indicating success or error
-        """
-        try:
-            user_id = data.get("id")
-
-            if not user_id:
-                return {"success": False, "error": "User ID is required"}
-
-            deleted = await self.repository.delete(user_id)
-
-            if not deleted:
-                return {"success": False, "error": "User not found"}
-
-            logger.info(f"User deleted successfully: ID={user_id}")
-
-            return {"success": True, "data": {"deleted": True, "id": user_id}}
-
-        except Exception as e:
-            logger.error(f"Error deleting user: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
-
-    async def handle_list_users(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle list_users command.
-
-        Args:
-            data: Contains limit and offset
-
-        Returns:
-            Response with list of users or error
-        """
-        try:
-            limit = data.get("limit", 10)
-            offset = data.get("offset", 0)
-
-            # Get users and total count
-            users = await self.repository.get_all(limit=limit, offset=offset)
-            total = await self.repository.count_all()
-
-            # Convert timestamps to strings for JSON
-            for user in users:
-                if user.get("created_at"):
-                    user["created_at"] = user["created_at"].isoformat()
-                if user.get("updated_at"):
-                    user["updated_at"] = user["updated_at"].isoformat()
-
-            logger.debug(f"Listed {len(users)} users (total={total}, limit={limit}, offset={offset})")
-
-            return {"success": True, "data": {"users": users, "total": total}}
-
-        except Exception as e:
-            logger.error(f"Error listing users: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+        logger.debug(f"Listed {len(users)} users (total={total}, limit={command.limit}, offset={command.offset})")
+        return rpc_ok(UserList, {"users": users, "total": total})
