@@ -13,6 +13,7 @@ from task_tracker_common.messaging import RabbitMQClient
 
 from ..core.exceptions import BusUnavailableError
 from ..service.tasks import TaskService
+from ..service.users import UserService
 
 
 def get_tasks_service(request: Request) -> TaskService:
@@ -23,6 +24,11 @@ def get_tasks_service(request: Request) -> TaskService:
     """
     state = request.app.state
     return TaskService(bus=state.tasks_bus, cache=state.cache, events=state.events_hub)
+
+
+def get_users_service(request: Request) -> UserService:
+    """Assemble the users service for one request."""
+    return UserService(bus=request.app.state.users_bus)
 
 
 def get_rabbitmq(request: Request) -> RabbitMQClient:
@@ -38,4 +44,5 @@ def get_rabbitmq(request: Request) -> RabbitMQClient:
 
 
 TasksServiceDep = Annotated[TaskService, Depends(get_tasks_service)]
+UsersServiceDep = Annotated[UserService, Depends(get_users_service)]
 RabbitMQDep = Annotated[RabbitMQClient, Depends(get_rabbitmq)]

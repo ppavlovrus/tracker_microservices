@@ -7,19 +7,29 @@ from ..core.exceptions import (
     BusProtocolError,
     BusTimeoutError,
     BusUnavailableError,
+    EmailTakenError,
     GatewayError,
+    InvalidCredentialsError,
     TaskNotFoundError,
     UpstreamFailureError,
+    UsernameTakenError,
+    UserNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
 
 # Domain error -> what the HTTP client is told. The wording is API surface:
-# the client knows about a tasks service, not about a bus or a worker.
+# the client knows about the resources, not about a bus or a worker. The
+# timeout wording is deliberately service-neutral: one exception type serves
+# every bus client, so it cannot name the service that went quiet.
 STATUS: dict[type[GatewayError], tuple[int, str]] = {
     TaskNotFoundError: (404, "Task not found"),
+    UserNotFoundError: (404, "User not found"),
+    EmailTakenError: (409, "Email already exists"),
+    UsernameTakenError: (409, "Username already exists"),
+    InvalidCredentialsError: (401, "Invalid username or password"),
     BusUnavailableError: (503, "Service temporarily unavailable"),
-    BusTimeoutError: (504, "Tasks service timeout"),
+    BusTimeoutError: (504, "Upstream service timeout"),
     BusProtocolError: (500, "Internal server error"),
     UpstreamFailureError: (500, "Internal server error"),
 }

@@ -23,6 +23,7 @@ from .api.routers import (
     web,
 )
 from .broker.tasks_client import TasksBusClient
+from .broker.users_client import UsersBusClient
 from .cache import Cache
 from .chat import ChatHub
 from .config import (
@@ -123,10 +124,11 @@ async def lifespan(app: FastAPI):
         await rabbitmq_client.connect()
         await rabbitmq_client.setup_rpc_client()
 
-        # Collaborators the tasks vertical asks for by dependency rather than
-        # by reaching into this module.
+        # Collaborators the reworked verticals ask for by dependency rather
+        # than by reaching into this module.
         app.state.rabbitmq = rabbitmq_client
         app.state.tasks_bus = TasksBusClient(rabbitmq_client)
+        app.state.users_bus = UsersBusClient(rabbitmq_client)
 
         # Initialize Redis cache (best-effort, never blocks startup)
         cache = Cache(redis_url=REDIS_URL, enabled=CACHE_ENABLED)
@@ -150,19 +152,16 @@ async def lifespan(app: FastAPI):
         )
         await session_store.connect()
 
-        # Set client in routers
-        users.set_rabbitmq_client(rabbitmq_client)
+        # Set client in the routers that still speak to the bus raw
         comments.set_rabbitmq_client(rabbitmq_client)
         tags.set_rabbitmq_client(rabbitmq_client)
         attachments.set_rabbitmq_client(rabbitmq_client)
-        auth.set_rabbitmq_client(rabbitmq_client)
         auth.set_session_store(session_store)
 
         # Yandex OAuth needs its own one-time state tokens (CSRF protection)
         if YANDEX_OAUTH_ENABLED:
             oauth_state_store = OAuthStateStore(redis_url=REDIS_URL, ttl=OAUTH_STATE_TTL)
             await oauth_state_store.connect()
-            oauth.set_rabbitmq_client(rabbitmq_client)
             oauth.set_session_store(session_store)
             oauth.set_state_store(oauth_state_store)
 
@@ -258,6 +257,7 @@ register_error_handlers(app)
 # no cache, nobody to notify.
 app.state.rabbitmq = None
 app.state.tasks_bus = TasksBusClient(None)
+app.state.users_bus = UsersBusClient(None)
 app.state.cache = None
 app.state.events_hub = None
 

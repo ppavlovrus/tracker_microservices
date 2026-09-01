@@ -1,18 +1,22 @@
-"""Auth router for the Gateway: password login with Redis-backed sessions."""
+"""Auth router for the Gateway: password login with Redis-backed sessions.
 
-import asyncio
+The credential work -- the lookup, the bcrypt rounds, the rule that an
+unknown username and a wrong password must be one indistinguishable failure --
+lives in the user service. What remains here is HTTP: the cookie and the
+session records.
+"""
+
 import logging
 from typing import Annotated, Any
 
-import bcrypt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 
 from ...config import (
     COOKIE_SECURE,
-    RPC_TIMEOUT,
     SESSION_COOKIE_NAME,
     SESSION_TTL,
 )
+from ..deps import UsersServiceDep
 from ..schemas.auth import LoginRequest, LoginResponse, UserPublic
 
 logger = logging.getLogger(__name__)
@@ -20,31 +24,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Set in main.py lifespan.
-rabbitmq_client = None
 session_store = None
-
-
-def set_rabbitmq_client(client) -> None:
-    global rabbitmq_client
-    rabbitmq_client = client
 
 
 def set_session_store(store) -> None:
     global session_store
     session_store = store
-
-
-# A real bcrypt hash used as a constant-time decoy when the username is unknown,
-# so a failed login does the same work whether or not the user exists.
-_DUMMY_HASH = "$2b$12$oOUmtFn7fm50bdt91.qyEelpY.SIYTtITMl8s4/O4evApDalGS.R2"
-
-
-def _verify_password(password: str, password_hash: str) -> bool:
-    """Constant-time bcrypt check. Never raises on a malformed hash."""
-    try:
-        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
-    except (ValueError, TypeError):
-        return False
 
 
 async def get_current_user(
@@ -66,42 +51,19 @@ async def require_auth(
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(credentials: LoginRequest, response: Response) -> LoginResponse:
+async def login(credentials: LoginRequest, response: Response, users: UsersServiceDep) -> LoginResponse:
     """Authenticate by username/password and start a session.
 
-    Returns 401 on any failure (unknown user or wrong password) with the same
-    generic message, so the response does not reveal whether a username exists.
+    Answers 401 on any failure (unknown user or wrong password) with the same
+    generic message: ``authenticate`` raises one InvalidCredentialsError for
+    both causes, so this router could not tell them apart if it tried.
     """
-    if not rabbitmq_client or session_store is None:
+    if session_store is None:
         raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
-    try:
-        rpc = await rabbitmq_client.call(
-            queue_name="users.commands",
-            message={
-                "command": "get_user_by_username",
-                "data": {"username": credentials.username},
-            },
-            timeout=RPC_TIMEOUT,
-        )
-    except TimeoutError:
-        logger.error("Timeout waiting for Users service during login")
-        raise HTTPException(status_code=504, detail="Users service timeout")
+    account = await users.authenticate(credentials.username, credentials.password)
 
-    invalid = HTTPException(status_code=401, detail="Invalid username or password")
-
-    # bcrypt is CPU-bound and would block the event loop; run it in a thread.
-    if not rpc.get("success"):
-        # Hash a dummy value anyway to keep timing roughly constant (no enumeration).
-        await asyncio.to_thread(_verify_password, credentials.password, _DUMMY_HASH)
-        raise invalid
-
-    user = rpc["data"]
-    ok = await asyncio.to_thread(_verify_password, credentials.password, user.get("password_hash", ""))
-    if not ok:
-        raise invalid
-
-    token = await session_store.create(user)
+    token = await session_store.create({"id": account.id, "username": account.username, "email": account.email})
     if token is None:
         # Session backend is down -- fail closed rather than fake a login.
         raise HTTPException(status_code=503, detail="Session backend unavailable")
@@ -115,8 +77,7 @@ async def login(credentials: LoginRequest, response: Response) -> LoginResponse:
         samesite="lax",
         path="/",
     )
-    logger.info(f"Login success: user_id={user['id']} username={user['username']}")
-    return LoginResponse(user=UserPublic(**user))
+    return LoginResponse(user=UserPublic(id=account.id, username=account.username, email=account.email))
 
 
 @router.post("/logout", status_code=204)
