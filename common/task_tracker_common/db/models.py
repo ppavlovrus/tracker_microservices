@@ -48,8 +48,11 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(64), nullable=False, unique=True)
     email = Column(String(255), nullable=False, unique=True)
-    password_hash = Column(Text, nullable=False)
+    # Nullable since d4e5f6a7b8c9: OAuth-backed users have no local password.
+    password_hash = Column(Text, nullable=True)
+    yandex_id = Column(String(64), nullable=True, unique=True)
     created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
+    updated_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
     last_login = Column(TIMESTAMP, nullable=True)
 
     # Relationships (for Alembic autogeneration)
