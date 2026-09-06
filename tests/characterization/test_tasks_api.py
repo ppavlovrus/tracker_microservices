@@ -73,6 +73,43 @@ async def test_task_create_increase_total_and_status_counter_by_1(auth_client, m
     assert sum(after.by_status.values()) == after.total
 
 
+async def test_status_change_moves_the_status_counters(auth_client, make_task):
+    # The task is created before the snapshot, so "1" is guaranteed to be
+    # present (and >= 1) in "before"; "after" may legitimately report it as 0.
+    task = await make_task(status_id=1)
+    response = await auth_client.get("/tasks/stats")
+    assert response.status_code == 200
+    before = StatsContract.model_validate(response.json())
+
+    moved = await auth_client.put(f"/tasks/{task.id}", json={"status_id": 2})
+    assert moved.status_code == 200
+
+    response2 = await auth_client.get("/tasks/stats")
+    assert response2.status_code == 200
+    after = StatsContract.model_validate(response2.json())
+    assert after.total == before.total
+    assert before.by_status["1"] - after.by_status.get("1", 0) == 1
+    assert after.by_status.get("2", 0) - before.by_status.get("2", 0) == 1
+    assert sum(after.by_status.values()) == after.total
+
+
+async def test_delete_decrements_total_and_status_counter(auth_client, make_task):
+    task = await make_task(status_id=2)
+    response = await auth_client.get("/tasks/stats")
+    assert response.status_code == 200
+    before = StatsContract.model_validate(response.json())
+
+    deleted = await auth_client.delete(f"/tasks/{task.id}")
+    assert deleted.status_code == 204
+
+    response2 = await auth_client.get("/tasks/stats")
+    assert response2.status_code == 200
+    after = StatsContract.model_validate(response2.json())
+    assert before.total - after.total == 1
+    assert before.by_status["2"] - after.by_status.get("2", 0) == 1
+    assert sum(after.by_status.values()) == after.total
+
+
 async def test_get_limits_5_and_offset_0(auth_client):
     response = await auth_client.get("/tasks", params={"limit": 5, "offset": 0})
     assert response.status_code == 200
