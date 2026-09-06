@@ -7,6 +7,7 @@ The application itself uses asyncpg directly for database operations.
 from sqlalchemy import (
     TIMESTAMP,
     BigInteger,
+    CheckConstraint,
     Column,
     Date,
     ForeignKey,
@@ -87,6 +88,20 @@ class TaskStatus(Base):
 
     # Relationships
     tasks = relationship("Task", back_populates="status")
+
+
+class TaskStatusCount(Base):
+    """Denormalized per-status task counts.
+
+    Maintained by the task repository's write paths in the same transaction
+    as the task row; read by the stats query instead of scanning ``task``.
+    """
+
+    __tablename__ = "task_status_count"
+    __table_args__ = (CheckConstraint("cnt >= 0", name="ck_task_status_count_nonnegative"),)
+
+    status_id = Column(Integer, ForeignKey("task_status.id", ondelete="CASCADE"), primary_key=True)
+    cnt = Column(Integer, nullable=False, server_default="0")
 
 
 class Tag(Base):

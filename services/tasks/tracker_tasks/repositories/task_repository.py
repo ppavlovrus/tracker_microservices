@@ -56,6 +56,46 @@ class TaskRepository:
             task["tags"] = json.loads(tags)
         return task
 
+    @staticmethod
+    async def _bump_status_counts(conn: asyncpg.Connection, deltas: dict[int, int]) -> None:
+        """Apply per-status counter deltas inside the caller's transaction.
+
+        Statuses are processed in ascending order so that two transactions
+        moving tasks between the same pair of statuses in opposite directions
+        lock the counter rows in the same order and cannot deadlock. The
+        upsert covers a status added after the backfill migration: its first
+        task inserts the row.
+        """
+        for status_id in sorted(deltas):
+            delta = deltas[status_id]
+            if delta == 0:
+                continue
+            if delta > 0:
+                await conn.execute(
+                    """
+                    INSERT INTO task_status_count AS c (status_id, cnt)
+                    VALUES ($1, $2)
+                    ON CONFLICT (status_id) DO UPDATE SET cnt = c.cnt + $2
+                    """,
+                    status_id,
+                    delta,
+                )
+            else:
+                # Not the same upsert with a negative delta: Postgres checks the
+                # candidate INSERT row against the table's CHECK constraints
+                # BEFORE resolving the conflict, so VALUES ($1, -1) violates
+                # cnt >= 0 even when the existing row would absorb it. A plain
+                # UPDATE is also honest about drift: decrementing a status that
+                # has no counter row means some earlier write path failed to
+                # maintain it, and that deserves a loud record, not a new row.
+                result = await conn.execute(
+                    "UPDATE task_status_count SET cnt = cnt + $2 WHERE status_id = $1",
+                    status_id,
+                    delta,
+                )
+                if result != "UPDATE 1":
+                    logger.error(f"No counter row for status {status_id}; counters have drifted")
+
     async def get_by_id(self, task_id: int) -> dict[str, Any] | None:
         """
         Get task by ID, with its tags aggregated in the same query.
@@ -90,7 +130,7 @@ class TaskRepository:
         Returns:
             Created task data
         """
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
                 """
                 INSERT INTO task (
@@ -108,6 +148,7 @@ class TaskRepository:
                 data.get("deadline_start"),
                 data.get("deadline_end"),
             )
+            await self._bump_status_counts(conn, {row["status_id"]: 1})
 
             logger.info(f"Task created: ID={row['id']}, title='{row['title']}'")
             return dict(row)
@@ -154,15 +195,28 @@ class TaskRepository:
                       deadline_start, deadline_end, created_at, updated_at
         """
 
-        async with self.pool.acquire() as conn:
+        async with self.pool.acquire() as conn, conn.transaction():
+            old_status = None
+            if "status_id" in data:
+                # The counters need the pre-update status, and RETURNING only
+                # sees the new row. FOR UPDATE holds the row so a concurrent
+                # status change cannot slip in between this read and the write.
+                old_status = await conn.fetchval("SELECT status_id FROM task WHERE id = $1 FOR UPDATE", task_id)
+                if old_status is None:
+                    logger.warning(f"Task not found for update: ID={task_id}")
+                    return None
+
             row = await conn.fetchrow(query, *values)
 
-            if row:
-                logger.info(f"Task updated: ID={task_id}")
-                return dict(row)
+            if row is None:
+                logger.warning(f"Task not found for update: ID={task_id}")
+                return None
 
-            logger.warning(f"Task not found for update: ID={task_id}")
-            return None
+            if old_status is not None and row["status_id"] != old_status:
+                await self._bump_status_counts(conn, {old_status: -1, row["status_id"]: 1})
+
+            logger.info(f"Task updated: ID={task_id}")
+            return dict(row)
 
     async def delete(self, task_id: int) -> bool:
         """
@@ -174,18 +228,16 @@ class TaskRepository:
         Returns:
             True if deleted, False if not found
         """
-        async with self.pool.acquire() as conn:
-            result = await conn.execute("DELETE FROM task WHERE id = $1", task_id)
+        async with self.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow("DELETE FROM task WHERE id = $1 RETURNING status_id", task_id)
 
-            # result is like "DELETE 1" or "DELETE 0"
-            deleted = result.split()[-1] == "1"
-
-            if deleted:
-                logger.info(f"Task deleted: ID={task_id}")
-            else:
+            if row is None:
                 logger.warning(f"Task not found for deletion: ID={task_id}")
+                return False
 
-            return deleted
+            await self._bump_status_counts(conn, {row["status_id"]: -1})
+            logger.info(f"Task deleted: ID={task_id}")
+            return True
 
     async def get_all(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
         """
@@ -226,35 +278,26 @@ class TaskRepository:
             return count or 0
 
     async def count_by_status(self) -> dict[str, int]:
-        """Count tasks per status in a single pass using conditional aggregates.
+        """Read the denormalized per-status counters.
 
-        ``FILTER (WHERE ...)`` scopes each ``count`` to one status while the
-        query still scans the table only once — unlike WHERE, which would need a
-        separate query per status. Counts cover the whole table, so the Kanban
-        column totals stay correct regardless of list pagination.
+        These used to be ``count(*) FILTER`` aggregates over the whole task
+        table — an O(n) pass on every board load. The counters are now
+        maintained by the write paths (create, delete, status change) in the
+        same transaction as the task row, so this reads a handful of rows
+        regardless of table size. The backfill migration seeded a zero row per
+        status, so every status stays present in the answer.
 
         Returns a dict keyed by status id (as string, for JSON transport) plus a
         ``total`` key.
-
-        This query need to be re-writen
         """
         async with self.pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT
-                    count(*)                              AS total,
-                    count(*) FILTER (WHERE status_id = 1) AS status_1,
-                    count(*) FILTER (WHERE status_id = 2) AS status_2,
-                    count(*) FILTER (WHERE status_id = 3) AS status_3
-                FROM task
-                """
-            )
-            return {
-                "total": row["total"],
-                "1": row["status_1"],
-                "2": row["status_2"],
-                "3": row["status_3"],
-            }
+            rows = await conn.fetch("SELECT status_id, cnt FROM task_status_count ORDER BY status_id")
+
+        counts: dict[str, int] = {"total": 0}
+        for row in rows:
+            counts[str(row["status_id"])] = row["cnt"]
+            counts["total"] += row["cnt"]
+        return counts
 
     async def add_tag(self, task_id: int, tag_id: int) -> None:
         """Link a tag to a task (idempotent)."""
