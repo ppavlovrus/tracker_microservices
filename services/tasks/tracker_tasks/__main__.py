@@ -5,7 +5,7 @@ import logging
 import signal
 import sys
 from collections.abc import Awaitable, Callable
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 import asyncpg
 from aio_pika import IncomingMessage
@@ -56,15 +56,7 @@ Handler = Callable[[BaseModel], Awaitable[dict[str, Any]]]
 command_table: dict[str, tuple[type[BaseModel], Handler]] = {}
 
 
-def build_command_table(handlers: TaskHandlers) -> dict[TaskCommand, tuple[type[TaskCreationContract], Callable[
-    [TaskCreationContract], Coroutine[Any, Any, dict[str, Any]]]] | tuple[type[TaskGetByIdContract], Callable[
-    [TaskGetByIdContract], Coroutine[Any, Any, dict[str, Any]]]] | tuple[type[TaskUpdateContract], Callable[
-    [TaskUpdateContract], Coroutine[Any, Any, dict[str, Any]]]] | tuple[type[TaskDeleteContract], Callable[
-    [TaskDeleteContract], Coroutine[Any, Any, dict[str, Any]]]] | tuple[type[TaskListContract], Callable[
-    [TaskListContract], Coroutine[Any, Any, dict[str, Any]]]] | tuple[type[TaskStatsContract], Callable[
-    [TaskStatsContract], Coroutine[Any, Any, dict[str, Any]]]] | tuple[type[TaskAddTagContract], Callable[
-    [TaskAddTagContract], Coroutine[Any, Any, dict[str, Any]]]] | tuple[type[TaskRemoveTagContract], Callable[
-    [TaskRemoveTagContract], Coroutine[Any, Any, dict[str, Any]]]]]:
+def build_command_table(handlers: TaskHandlers) -> dict[str, tuple[type[BaseModel], Handler]]:
     """Map every command this service answers to its payload contract.
 
     A table rather than an if/elif ladder: adding a command means adding a row,
