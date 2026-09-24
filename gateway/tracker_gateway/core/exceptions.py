@@ -33,6 +33,20 @@ class TaskNotFoundError(GatewayError):
         super().__init__(f"Task {task_id} not found" if task_id is not None else "Task not found")
 
 
+class CreatorNotFoundError(GatewayError):
+    """A task named a creator no user answers to."""
+
+    def __init__(self) -> None:
+        super().__init__("creator_id does not reference an existing user")
+
+
+class StatusNotFoundError(GatewayError):
+    """A task named a status the dictionary does not hold."""
+
+    def __init__(self) -> None:
+        super().__init__("status_id does not reference an existing status")
+
+
 class UserNotFoundError(GatewayError):
     def __init__(self, user_id: int | None = None) -> None:
         self.user_id = user_id

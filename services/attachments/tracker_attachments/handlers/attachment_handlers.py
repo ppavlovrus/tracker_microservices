@@ -3,10 +3,33 @@
 import logging
 from typing import Any
 
+import asyncpg
+from task_tracker_common.contracts.responses import ErrorCode, rpc_error
+
 from ..repositories.attachment_repository import AttachmentRepository
 from ..storage import S3Storage, build_object_key
 
 logger = logging.getLogger(__name__)
+
+
+def _internal(exc: Exception) -> dict[str, Any]:
+    """The answer to an exception nobody classified.
+
+    ``str(exc)`` belongs in the log and stays there. It used to be the HTTP
+    body as well, which is how a foreign-key violation reached clients
+    carrying the table, the constraint name and the offending value.
+    """
+    return rpc_error(ErrorCode.INTERNAL, "Internal error", type(exc).__name__)
+
+
+def _missing_reference(exc: asyncpg.ForeignKeyViolationError) -> dict[str, Any]:
+    """Translate a foreign-key violation into an envelope naming the column.
+
+    A attachment pointed at a row that does not exist. The caller is the only one
+    who can fix that, so it is reported as a missing reference rather than as
+    an internal failure.
+    """
+    return rpc_error(ErrorCode.NOT_FOUND, "Task not found", "task_id")
 
 
 class AttachmentHandlers:
@@ -63,9 +86,13 @@ class AttachmentHandlers:
 
             return {"success": True, "data": attachment}
 
+        except asyncpg.ForeignKeyViolationError as e:
+            logger.warning(f"Attachment references a missing row: {e.constraint_name}")
+            return _missing_reference(e)
+
         except Exception as e:
             logger.error(f"Error creating attachment: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_get_attachment(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -101,7 +128,7 @@ class AttachmentHandlers:
 
         except Exception as e:
             logger.error(f"Error getting attachment: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_delete_attachment(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -135,7 +162,7 @@ class AttachmentHandlers:
 
         except Exception as e:
             logger.error(f"Error deleting attachment: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_list_attachments_by_task(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -168,4 +195,4 @@ class AttachmentHandlers:
 
         except Exception as e:
             logger.error(f"Error listing attachments: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)

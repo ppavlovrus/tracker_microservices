@@ -15,6 +15,7 @@ remembering to add a fifth ``isoformat()`` call in four places.
 import logging
 from typing import Any
 
+import asyncpg
 from task_tracker_common.contracts.commands import (
     TaskAddTagContract,
     TaskCreationContract,
@@ -46,6 +47,21 @@ TASK_NOT_FOUND = "Task not found"
 Envelope = dict[str, Any]
 
 
+def _missing_reference(exc: asyncpg.ForeignKeyViolationError) -> Envelope:
+    """Translate a foreign-key violation into an envelope naming the column.
+
+    A creator_id or status_id that no row answers to is not an internal
+    failure -- it is a request that cannot be satisfied, and the caller is the
+    only one who can fix it. ``error_type`` carries the column as the
+    machine-readable half, the same way the users service reports which unique
+    constraint collided, so the gateway picks a domain error without parsing
+    the message.
+    """
+    if exc.constraint_name == "task_status_id_fkey":
+        return rpc_error(ErrorCode.NOT_FOUND, "Status not found", "status_id")
+    return rpc_error(ErrorCode.NOT_FOUND, "Creator not found", "creator_id")
+
+
 class TaskHandlers:
     """Handlers for task-related commands."""
 
@@ -55,7 +71,11 @@ class TaskHandlers:
 
     async def handle_create_task(self, command: TaskCreationContract) -> Envelope:
         """Handle ``create_task``: insert the row, answer with the stored task."""
-        task = await self.repository.create(command.model_dump())
+        try:
+            task = await self.repository.create(command.model_dump())
+        except asyncpg.ForeignKeyViolationError as e:
+            logger.warning(f"Task creation references a missing row: {e.constraint_name}")
+            return _missing_reference(e)
 
         logger.info(f"Task created successfully: ID={task['id']}")
         # INSERT ... RETURNING cannot produce the tags aggregate, and a task

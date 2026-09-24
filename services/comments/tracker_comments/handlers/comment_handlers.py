@@ -3,9 +3,34 @@
 import logging
 from typing import Any
 
+import asyncpg
+from task_tracker_common.contracts.responses import ErrorCode, rpc_error
+
 from ..repositories.comment_repository import CommentRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _internal(exc: Exception) -> dict[str, Any]:
+    """The answer to an exception nobody classified.
+
+    ``str(exc)`` belongs in the log and stays there. It used to be the HTTP
+    body as well, which is how a foreign-key violation reached clients
+    carrying the table, the constraint name and the offending value.
+    """
+    return rpc_error(ErrorCode.INTERNAL, "Internal error", type(exc).__name__)
+
+
+def _missing_reference(exc: asyncpg.ForeignKeyViolationError) -> dict[str, Any]:
+    """Translate a foreign-key violation into an envelope naming the column.
+
+    A comment pointed at a row that does not exist. The caller is the only one
+    who can fix that, so it is reported as a missing reference rather than as
+    an internal failure.
+    """
+    if exc.constraint_name == "comment_user_id_fkey":
+        return rpc_error(ErrorCode.NOT_FOUND, "User not found", "user_id")
+    return rpc_error(ErrorCode.NOT_FOUND, "Task not found", "task_id")
 
 # Columns that come back from asyncpg as datetimes. The transport is
 # json.dumps, which cannot serialise one, so every handler that returns a
@@ -63,9 +88,13 @@ class CommentHandlers:
 
             return {"success": True, "data": comment}
 
+        except asyncpg.ForeignKeyViolationError as e:
+            logger.warning(f"Comment references a missing row: {e.constraint_name}")
+            return _missing_reference(e)
+
         except Exception as e:
             logger.error(f"Error creating comment: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_get_comment(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -96,7 +125,7 @@ class CommentHandlers:
 
         except Exception as e:
             logger.error(f"Error getting comment: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_update_comment(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -132,7 +161,7 @@ class CommentHandlers:
 
         except Exception as e:
             logger.error(f"Error updating comment: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_delete_comment(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -161,7 +190,7 @@ class CommentHandlers:
 
         except Exception as e:
             logger.error(f"Error deleting comment: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_list_comments_by_task(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -192,4 +221,4 @@ class CommentHandlers:
 
         except Exception as e:
             logger.error(f"Error listing comments: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)

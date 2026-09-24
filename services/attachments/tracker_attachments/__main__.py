@@ -7,6 +7,7 @@ import sys
 
 import asyncpg
 from aio_pika import IncomingMessage
+from task_tracker_common.contracts.responses import ErrorCode, rpc_error
 from task_tracker_common.messaging import RabbitMQClient
 
 from .config import (
@@ -100,8 +101,11 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
             return {"success": False, "error": f"Unknown command: {command}", "error_type": "UnknownCommand"}
 
     except Exception as e:
+        # str(e) stays in the log: an unclassified failure is often a driver
+        # message naming a table, a constraint and the offending value, and
+        # that is not something an HTTP client should be handed.
         logger.error(f"Error handling command {command}: {e}", exc_info=True)
-        return {"success": False, "error": str(e), "error_type": type(e).__name__}
+        return rpc_error(ErrorCode.INTERNAL, "Internal error", type(e).__name__)
 
 
 async def startup():

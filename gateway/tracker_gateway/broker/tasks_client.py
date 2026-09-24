@@ -39,11 +39,22 @@ from ..core.exceptions import (
     BusProtocolError,
     BusTimeoutError,
     BusUnavailableError,
+    CreatorNotFoundError,
+    StatusNotFoundError,
     TaskNotFoundError,
     UpstreamFailureError,
 )
 
 logger = logging.getLogger(__name__)
+
+# A NOT_FOUND answer is about the task itself unless the worker named a column
+# instead: then the row that is missing is one the request pointed at, and the
+# caller gets a 400 naming the field rather than a 404 about a task that is
+# not what went wrong.
+MISSING_REFERENCE = {
+    "creator_id": CreatorNotFoundError,
+    "status_id": StatusNotFoundError,
+}
 
 
 class TasksBusClient:
@@ -150,6 +161,10 @@ class TasksBusClient:
         404 body carrying an asyncpg message.
         """
         if answer.code is ErrorCode.NOT_FOUND:
+            missing = MISSING_REFERENCE.get(answer.error_type or "")
+            if missing is not None:
+                logger.info(f"tasks service refused {command.value}: {answer.error}")
+                raise missing()
             raise TaskNotFoundError(task_id)
 
         if answer.code is ErrorCode.VALIDATION_ERROR:

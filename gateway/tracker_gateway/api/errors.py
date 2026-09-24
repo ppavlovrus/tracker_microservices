@@ -7,9 +7,11 @@ from ..core.exceptions import (
     BusProtocolError,
     BusTimeoutError,
     BusUnavailableError,
+    CreatorNotFoundError,
     EmailTakenError,
     GatewayError,
     InvalidCredentialsError,
+    StatusNotFoundError,
     TaskNotFoundError,
     UpstreamFailureError,
     UsernameTakenError,
@@ -24,6 +26,10 @@ logger = logging.getLogger(__name__)
 # every bus client, so it cannot name the service that went quiet.
 STATUS: dict[type[GatewayError], tuple[int, str]] = {
     TaskNotFoundError: (404, "Task not found"),
+    # A body that names a row nobody answers to. Not a 404: the addressed
+    # resource is fine, it is the reference inside the request that is not.
+    CreatorNotFoundError: (400, "Unknown creator_id"),
+    StatusNotFoundError: (400, "Unknown status_id"),
     UserNotFoundError: (404, "User not found"),
     EmailTakenError: (409, "Email already exists"),
     UsernameTakenError: (409, "Username already exists"),

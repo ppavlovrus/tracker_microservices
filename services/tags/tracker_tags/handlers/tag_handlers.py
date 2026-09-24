@@ -3,9 +3,22 @@
 import logging
 from typing import Any
 
+from task_tracker_common.contracts.responses import ErrorCode, rpc_error
+
 from ..repositories.tag_repository import TagRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _internal(exc: Exception) -> dict[str, Any]:
+    """The answer to an exception nobody classified.
+
+    ``str(exc)`` belongs in the log and stays there: an unclassified failure
+    here is usually a driver message naming a table, a constraint and the
+    offending value, and that is not something an HTTP client should be
+    handed. The classified answers above it keep their own wording.
+    """
+    return rpc_error(ErrorCode.INTERNAL, "Internal error", type(exc).__name__)
 
 
 class TagHandlers:
@@ -49,7 +62,7 @@ class TagHandlers:
 
         except Exception as e:
             logger.error(f"Error creating tag: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_get_tag(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -78,7 +91,7 @@ class TagHandlers:
 
         except Exception as e:
             logger.error(f"Error getting tag: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_get_tag_by_name(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -107,7 +120,7 @@ class TagHandlers:
 
         except Exception as e:
             logger.error(f"Error getting tag by name: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_update_tag(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -146,7 +159,7 @@ class TagHandlers:
 
         except Exception as e:
             logger.error(f"Error updating tag: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_delete_tag(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -175,7 +188,7 @@ class TagHandlers:
 
         except Exception as e:
             logger.error(f"Error deleting tag: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)
 
     async def handle_list_tags(self, data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -201,4 +214,4 @@ class TagHandlers:
 
         except Exception as e:
             logger.error(f"Error listing tags: {e}", exc_info=True)
-            return {"success": False, "error": str(e), "error_type": type(e).__name__}
+            return _internal(e)

@@ -3,7 +3,7 @@
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
 from ...core.config import CACHE_TTL_TAGS, RPC_TIMEOUT
 from ..schemas.tags import (
@@ -12,6 +12,7 @@ from ..schemas.tags import (
     TagResponse,
     TagUpdate,
 )
+from ._rpc import call_worker, require_bus
 
 logger = logging.getLogger(__name__)
 
@@ -48,41 +49,21 @@ def _tags_list_key(limit: int, offset: int) -> str:
 
 def _require_bus() -> None:
     """Refuse the request when there is nobody to ask."""
-    if not rabbitmq_client:
-        raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+    require_bus(rabbitmq_client)
 
 
 async def _call_tags(command: str, data: dict[str, Any], *, failure_status: int, failure_detail: str) -> dict[str, Any]:
-    """Send one tags command and return its payload, or raise the HTTP error.
-
-    Every endpoint here used to carry its own copy of this: the same guard,
-    the same three ``except`` clauses and the same success check, differing
-    only in the status a failed command maps to. Interim shape -- the tasks
-    and users verticals do this through a typed bus client and the domain
-    errors in ``api/errors.py``, and tags follows once its worker answers with
-    an error ``code`` instead of a free-text string.
-    """
-    _require_bus()
-
-    try:
-        response = await rabbitmq_client.call(
-            queue_name=QUEUE_NAME,
-            message={"command": command, "data": data},
-            timeout=RPC_TIMEOUT,
-        )
-    except TimeoutError as exc:
-        logger.error("Timeout waiting for Tags service response")
-        raise HTTPException(status_code=504, detail="Tags service timeout") from exc
-    except Exception as exc:
-        logger.error(f"Error in {command}: {exc}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    if not response.get("success"):
-        detail = response.get("error", failure_detail)
-        logger.warning(f"Tags command {command} failed: {detail}")
-        raise HTTPException(status_code=failure_status, detail=detail)
-
-    return response["data"]
+    """Send one tags command and return its payload, or raise the HTTP error."""
+    return await call_worker(
+        rabbitmq_client,
+        queue=QUEUE_NAME,
+        service="Tags",
+        command=command,
+        data=data,
+        timeout=RPC_TIMEOUT,
+        failure_status=failure_status,
+        failure_detail=failure_detail,
+    )
 
 
 async def _drop_cached_pages() -> None:
