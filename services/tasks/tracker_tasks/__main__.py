@@ -184,8 +184,10 @@ async def shutdown():
     logger.info("=" * 60)
 
     try:
-        # Close RabbitMQ connection
+        # Stop taking new messages and let the ones in flight finish before
+        # the connection and the pool they are using go away.
         if rabbitmq_client:
+            await rabbitmq_client.stop_consuming()
             await rabbitmq_client.close()
             logger.info("RabbitMQ connection closed")
 

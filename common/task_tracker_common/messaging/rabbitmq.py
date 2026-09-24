@@ -26,6 +26,12 @@ from aio_pika.abc import (
 logger = logging.getLogger(__name__)
 
 
+def _command_header(message: dict[str, Any]) -> dict[str, str] | None:
+    """The command name, for the message header. None when there is no command."""
+    command = message.get("command")
+    return {"command": command} if isinstance(command, str) else None
+
+
 class RabbitMQClient:
     """
     Universal RabbitMQ client for both Gateway and Microservices.
@@ -55,6 +61,14 @@ class RabbitMQClient:
 
         # For event publishing
         self.events_exchange: AbstractExchange | None = None
+
+        # Consumers registered by consume(), so shutdown can cancel them, and
+        # the handler tasks currently in flight. aiormq delivers every message
+        # in a task of its own, which is what makes handlers concurrent -- and
+        # also what makes closing the connection during shutdown able to kill
+        # one halfway through its transaction.
+        self._consumers: list[tuple[AbstractQueue, str]] = []
+        self._inflight: set[asyncio.Task] = set()
 
     async def connect(self) -> None:
         """Establish connection to RabbitMQ."""
@@ -138,6 +152,13 @@ class RabbitMQClient:
                     correlation_id=correlation_id,
                     reply_to=self.callback_queue.name,
                     content_type="application/json",
+                    # The command travels in a header as well as in the body.
+                    # Nothing routes on it yet -- the payload stays the single
+                    # source of truth -- but it makes the command readable in
+                    # the management UI and in a firehose trace without
+                    # decoding the body, and it is what a headers exchange
+                    # would bind on if this ever moves to broker-side routing.
+                    headers=_command_header(message),
                 ),
                 routing_key=queue_name,
             )
@@ -204,60 +225,86 @@ class RabbitMQClient:
 
         # Create wrapper to handle reply
         async def wrapped_callback(message: IncomingMessage) -> None:
-            async with message.process():
-                try:
-                    # Parse incoming message
-                    payload = json.loads(message.body.decode())
+            task = asyncio.current_task()
+            if task is not None:
+                self._inflight.add(task)
+            try:
+                await self._handle_delivery(message, callback, queue_name)
+            finally:
+                self._inflight.discard(task)
 
-                    logger.debug(
-                        f"[{self.service_name}] Received message from {queue_name}, "
-                        f"correlation_id={message.correlation_id}"
-                    )
-
-                    # Process message
-                    response = await callback(payload, message)
-
-                    # Send response if reply_to is set (RPC pattern)
-                    if message.reply_to:
-                        await self.channel.default_exchange.publish(
-                            Message(
-                                body=json.dumps(response).encode(),
-                                correlation_id=message.correlation_id,
-                                content_type="application/json",
-                            ),
-                            routing_key=message.reply_to,
-                        )
-                        logger.debug(
-                            f"[{self.service_name}] Sent response to {message.reply_to}, "
-                            f"correlation_id={message.correlation_id}"
-                        )
-
-                except Exception as e:
-                    logger.error(
-                        f"[{self.service_name}] Error processing message: {e}",
-                        exc_info=True,
-                    )
-
-                    # Send error response if reply_to is set
-                    if message.reply_to:
-                        error_response = {
-                            "success": False,
-                            "error": str(e),
-                            "error_type": type(e).__name__,
-                        }
-                        await self.channel.default_exchange.publish(
-                            Message(
-                                body=json.dumps(error_response).encode(),
-                                correlation_id=message.correlation_id,
-                                content_type="application/json",
-                            ),
-                            routing_key=message.reply_to,
-                        )
-
-        # Start consuming
-        await queue.consume(wrapped_callback)
+        # Start consuming. The tag is what lets shutdown stop new deliveries
+        # without tearing down the connection the in-flight handlers still use.
+        consumer_tag = await queue.consume(wrapped_callback)
+        self._consumers.append((queue, consumer_tag))
 
         logger.info(f"[{self.service_name}] Started consuming from {queue_name}, prefetch={prefetch_count}")
+
+    async def _reply(self, message: IncomingMessage, body: dict[str, Any]) -> None:
+        """Answer an RPC request. A message with no reply_to wants no answer."""
+        if not message.reply_to:
+            return
+        await self.channel.default_exchange.publish(
+            Message(
+                body=json.dumps(body).encode(),
+                correlation_id=message.correlation_id,
+                content_type="application/json",
+            ),
+            routing_key=message.reply_to,
+        )
+        logger.debug(
+            f"[{self.service_name}] Sent response to {message.reply_to}, "
+            f"correlation_id={message.correlation_id}"
+        )
+
+    async def _handle_delivery(
+        self,
+        message: IncomingMessage,
+        callback: Callable[[dict[str, Any], IncomingMessage], Awaitable[dict[str, Any]]],
+        queue_name: str,
+    ) -> None:
+        """Run one delivery: parse, hand to the callback, answer, acknowledge."""
+        async with message.process():
+            try:
+                payload = json.loads(message.body.decode())
+                logger.debug(
+                    f"[{self.service_name}] Received message from {queue_name}, "
+                    f"correlation_id={message.correlation_id}"
+                )
+                await self._reply(message, await callback(payload, message))
+            except Exception as e:
+                logger.error(f"[{self.service_name}] Error processing message: {e}", exc_info=True)
+                await self._reply(
+                    message,
+                    {"success": False, "error": "Internal error", "error_type": type(e).__name__},
+                )
+
+    async def stop_consuming(self, drain_timeout: float = 30.0) -> None:
+        """Stop taking new messages, then let the ones in flight finish.
+
+        Without this, shutdown closed the connection while handlers were still
+        running: aiormq gives each delivery its own task, so a handler could be
+        halfway through a transaction when the channel went away. Cancelling
+        the consumer first means the broker stops delivering and redelivers
+        whatever was never acknowledged.
+        """
+        for queue, tag in self._consumers:
+            try:
+                await queue.cancel(tag)
+            except Exception as e:
+                logger.warning(f"[{self.service_name}] Could not cancel consumer {tag}: {e}")
+        self._consumers.clear()
+
+        if not self._inflight:
+            return
+
+        logger.info(f"[{self.service_name}] Waiting for {len(self._inflight)} message(s) in flight")
+        _, pending = await asyncio.wait(set(self._inflight), timeout=drain_timeout)
+
+        if pending:
+            # Left running on purpose: the broker redelivers what was never
+            # acknowledged, and killing a handler mid-transaction is worse.
+            logger.error(f"[{self.service_name}] {len(pending)} handler(s) still running after {drain_timeout}s")
 
     # ==================== Event Publishing (for all services) ====================
 
