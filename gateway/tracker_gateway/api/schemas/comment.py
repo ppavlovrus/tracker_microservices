@@ -3,20 +3,21 @@
 from datetime import datetime
 
 from pydantic import BaseModel, Field
+from task_tracker_common.contracts.base import MAX_FREE_TEXT, RowId
 
 
 class CommentCreate(BaseModel):
     """Schema for creating a new comment."""
 
-    task_id: int = Field(..., description="Task the comment belongs to")
-    user_id: int = Field(..., description="Author user ID")
-    content: str = Field(..., min_length=1, description="Comment text")
+    task_id: RowId = Field(..., description="Task the comment belongs to")
+    user_id: RowId = Field(..., description="Author user ID")
+    content: str = Field(..., min_length=1, max_length=MAX_FREE_TEXT, description="Comment text")
 
 
 class CommentUpdate(BaseModel):
     """Schema for updating a comment."""
 
-    content: str = Field(..., min_length=1, description="Comment text")
+    content: str = Field(..., min_length=1, max_length=MAX_FREE_TEXT, description="Comment text")
 
 
 class CommentResponse(BaseModel):

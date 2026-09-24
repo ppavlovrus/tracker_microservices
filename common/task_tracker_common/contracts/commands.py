@@ -3,7 +3,7 @@ from enum import StrEnum
 
 from pydantic import Field, ValidationInfo, field_validator
 
-from .base import Contract
+from .base import Contract, FreeText, RowId, TaskStatusId
 
 
 class TaskCommand(StrEnum):
@@ -54,17 +54,17 @@ class UserCommand(StrEnum):
 
 class TaskCreationContract(Contract):
     title: str = Field(..., min_length=1, max_length=255)
-    description: str | None
-    status_id: int
-    creator_id: int
+    description: FreeText | None
+    status_id: TaskStatusId
+    creator_id: RowId
     deadline_start: date | None
     deadline_end: date | None
 
 
 class TaskUpdatePayloadContract(Contract):
     title: str | None = Field(None, min_length=1, max_length=255)
-    description: str | None = None
-    status_id: int | None = None
+    description: FreeText | None = None
+    status_id: TaskStatusId | None = None
     deadline_start: date | None = None
     deadline_end: date | None = None
 
@@ -78,26 +78,26 @@ class TaskUpdatePayloadContract(Contract):
 
 
 class TaskUpdateContract(Contract):
-    id: int = Field(..., gt=0)
+    id: RowId
     update: TaskUpdatePayloadContract
 
 
 class TaskDeleteContract(Contract):
-    id: int = Field(..., gt=0)
+    id: RowId
 
 
 class TaskGetByIdContract(Contract):
-    id: int = Field(..., gt=0)
+    id: RowId
 
 
 class TaskAddTagContract(Contract):
-    task_id: int = Field(..., gt=0)
-    tag_id: int = Field(..., gt=0)
+    task_id: RowId
+    tag_id: RowId
 
 
 class TaskRemoveTagContract(Contract):
-    task_id: int = Field(..., gt=0)
-    tag_id: int = Field(..., gt=0)
+    task_id: RowId
+    tag_id: RowId
 
 
 class TaskListContract(Contract):
@@ -131,16 +131,16 @@ class UserUpdatePayloadContract(Contract):
 
 
 class UserUpdateContract(Contract):
-    id: int = Field(..., gt=0)
+    id: RowId
     update: UserUpdatePayloadContract
 
 
 class UserDeleteContract(Contract):
-    id: int = Field(..., gt=0)
+    id: RowId
 
 
 class UserGetByIdContract(Contract):
-    id: int = Field(..., gt=0)
+    id: RowId
 
 
 class UserGetByUsernameContract(Contract):

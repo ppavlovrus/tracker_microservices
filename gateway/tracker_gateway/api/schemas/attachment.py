@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from pydantic import BaseModel, Field
+from task_tracker_common.contracts.base import INT8_MAX, RowId
 
 
 class AttachmentCreate(BaseModel):
@@ -12,10 +13,10 @@ class AttachmentCreate(BaseModel):
     and gets back a presigned URL to upload the bytes.
     """
 
-    task_id: int = Field(..., description="Task the attachment belongs to")
+    task_id: RowId = Field(..., description="Task the attachment belongs to")
     filename: str = Field(..., min_length=1, max_length=255, description="Original file name")
     content_type: str | None = Field(None, max_length=100, description="MIME type")
-    size_bytes: int | None = Field(None, ge=0, description="File size in bytes")
+    size_bytes: int | None = Field(None, ge=0, le=INT8_MAX, description="File size in bytes")
 
 
 class AttachmentResponse(BaseModel):

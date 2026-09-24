@@ -2,46 +2,53 @@
 
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from task_tracker_common.contracts.base import FreeText, RowId, TaskStatusId
+
+from .partial import PartialUpdate, reject_null
+
+
+def _deadline_end_after_start(v: date | None, info: ValidationInfo) -> date | None:
+    """Validate that deadline_end is after deadline_start."""
+    if v and info.data.get("deadline_start") and v < info.data["deadline_start"]:
+        raise ValueError("deadline_end must be after deadline_start")
+    return v
 
 
 class TaskCreate(BaseModel):
     """Schema for creating a new task."""
 
     title: str = Field(..., min_length=1, max_length=255, description="Task title")
-    description: str | None = Field(None, description="Task description")
-    status_id: int = Field(1, description="Task status ID (default: 1)")
-    creator_id: int = Field(..., description="User ID who creates the task")
+    description: FreeText | None = Field(None, description="Task description")
+    status_id: TaskStatusId = Field(TaskStatusId.TODO, description="Task status ID")
+    creator_id: RowId = Field(..., description="User ID who creates the task")
     deadline_start: date | None = Field(None, description="Task start deadline")
     deadline_end: date | None = Field(None, description="Task end deadline")
 
-    @field_validator("deadline_end")
-    @classmethod
-    def validate_deadline_end(cls, v: date | None, info) -> date | None:
-        """Validate that deadline_end is after deadline_start."""
-        if v and info.data.get("deadline_start"):
-            if v < info.data["deadline_start"]:
-                raise ValueError("deadline_end must be after deadline_start")
-        return v
+    _check_deadline = field_validator("deadline_end")(_deadline_end_after_start)
 
 
-class TaskUpdate(BaseModel):
-    """Schema for updating a task."""
+class TaskUpdate(PartialUpdate):
+    """Schema for updating a task.
+
+    Every field is optional, but the ones backing a NOT NULL column may not be
+    set to null: ``title`` and ``status_id`` can be changed or left alone,
+    never blanked. The deadlines and the description can be cleared, because
+    those columns are nullable.
+    """
 
     title: str | None = Field(None, min_length=1, max_length=255)
-    description: str | None = None
-    status_id: int | None = None
+    description: FreeText | None = None
+    status_id: TaskStatusId | None = None
     deadline_start: date | None = None
     deadline_end: date | None = None
 
-    @field_validator("deadline_end")
+    _check_deadline = field_validator("deadline_end")(_deadline_end_after_start)
+
+    @field_validator("title", "status_id")
     @classmethod
-    def validate_deadline_end(cls, v: date | None, info) -> date | None:
-        """Validate that deadline_end is after deadline_start."""
-        if v and info.data.get("deadline_start"):
-            if v < info.data["deadline_start"]:
-                raise ValueError("deadline_end must be after deadline_start")
-        return v
+    def _not_nullable(cls, v: object) -> object:
+        return reject_null(v)
 
 
 class TaskTag(BaseModel):
@@ -58,7 +65,11 @@ class TaskTagAdd(BaseModel):
 
 
 class TaskResponse(BaseModel):
-    """Schema for task response."""
+    """Schema for task response.
+
+    ``status_id`` stays a plain int here on purpose: a status added by a later
+    migration must not make an existing row unreadable on the way out.
+    """
 
     id: int
     title: str
