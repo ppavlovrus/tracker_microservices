@@ -22,10 +22,13 @@ gateway's memory without bound.
 import asyncio
 import json
 import logging
+from contextlib import suppress
 from typing import Any
 
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
+
+from ..core.config import REDIS_URL, SSE_CHANNEL, SSE_ENABLED, SSE_MAX_QUEUE
 
 logger = logging.getLogger(__name__)
 
@@ -136,3 +139,33 @@ class EventsHub:
                     queue.put_nowait(raw)
                 except (asyncio.QueueEmpty, asyncio.QueueFull):
                     logger.debug("Dropped event for a slow SSE client")
+
+
+# ── Lifecycle ────────────────────────────────────────────────
+
+hub: EventsHub | None = None
+listener_task: asyncio.Task | None = None
+
+
+async def init_events() -> EventsHub | None:
+    """Start the hub and its pub/sub listener, or nothing if SSE is off."""
+    global hub, listener_task
+    if not SSE_ENABLED:
+        return None
+    hub = EventsHub(redis_url=REDIS_URL, channel=SSE_CHANNEL, max_queue=SSE_MAX_QUEUE)
+    await hub.connect()
+    listener_task = asyncio.create_task(hub.run_listener())
+    return hub
+
+
+async def close_events() -> None:
+    """Stop the listener before the hub it reads from."""
+    global hub, listener_task
+    if listener_task is not None:
+        listener_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await listener_task
+        listener_task = None
+    if hub is not None:
+        await hub.close()
+        hub = None

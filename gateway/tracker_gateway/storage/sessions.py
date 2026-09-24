@@ -18,6 +18,8 @@ from typing import Any
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
 
+from ..core.config import AUTH_ENABLED, OAUTH_STATE_TTL, REDIS_URL, SESSION_TTL, YANDEX_OAUTH_ENABLED
+
 logger = logging.getLogger(__name__)
 
 
@@ -176,3 +178,44 @@ class OAuthStateStore:
             logger.warning(f"OAuth state consume failed: {e}")
             return False
         return deleted == 1
+
+
+# ── Lifecycle ────────────────────────────────────────────────
+# Both stores are owned here rather than by the lifespan: the "is this
+# configured at all?" question belongs to the module that knows what the
+# answer means, which keeps the startup sequence free of feature flags.
+
+session_store: SessionStore | None = None
+oauth_state_store: OAuthStateStore | None = None
+
+
+async def init_sessions() -> SessionStore:
+    """Open the session store. Fails closed: a dead Redis blocks writes."""
+    global session_store
+    session_store = SessionStore(redis_url=REDIS_URL, ttl=SESSION_TTL, enabled=AUTH_ENABLED)
+    await session_store.connect()
+    return session_store
+
+
+async def close_sessions() -> None:
+    global session_store
+    if session_store is not None:
+        await session_store.close()
+        session_store = None
+
+
+async def init_oauth_state() -> OAuthStateStore | None:
+    """Open the one-time OAuth state store, or nothing if OAuth is off."""
+    global oauth_state_store
+    if not YANDEX_OAUTH_ENABLED:
+        return None
+    oauth_state_store = OAuthStateStore(redis_url=REDIS_URL, ttl=OAUTH_STATE_TTL)
+    await oauth_state_store.connect()
+    return oauth_state_store
+
+
+async def close_oauth_state() -> None:
+    global oauth_state_store
+    if oauth_state_store is not None:
+        await oauth_state_store.close()
+        oauth_state_store = None

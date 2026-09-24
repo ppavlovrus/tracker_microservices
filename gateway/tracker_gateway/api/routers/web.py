@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from ...config import YANDEX_OAUTH_ENABLED
+from ...core.config import YANDEX_OAUTH_ENABLED
 
 router = APIRouter(tags=["Web UI"])
 

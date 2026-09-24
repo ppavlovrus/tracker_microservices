@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 
-from ...config import CACHE_TTL_TAGS, RPC_TIMEOUT
+from ...core.config import CACHE_TTL_TAGS, RPC_TIMEOUT
 from ..schemas.tags import (
     TagCreate,
     TagListResponse,

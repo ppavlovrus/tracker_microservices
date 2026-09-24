@@ -12,7 +12,8 @@ from typing import Any
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
 
-from .metrics import CACHE_REQUESTS
+from ..core.config import CACHE_ENABLED, REDIS_URL
+from ..core.metrics import CACHE_REQUESTS
 
 logger = logging.getLogger(__name__)
 
@@ -117,3 +118,26 @@ class Cache:
                 await self._client.delete(*keys)
         except RedisError as e:
             logger.warning(f"Cache DELETE pattern {pattern} failed: {e}")
+
+
+# ── Lifecycle ────────────────────────────────────────────────
+# The instance the lifespan builds once and the routers read through
+# ``app.state.cache``. It lives next to the class it owns, so nothing outside
+# this module has to know how a cache is started or stopped.
+
+cache: Cache | None = None
+
+
+async def init_cache() -> Cache:
+    """Open the cache connection. Best-effort: never blocks startup."""
+    global cache
+    cache = Cache(redis_url=REDIS_URL, enabled=CACHE_ENABLED)
+    await cache.connect()
+    return cache
+
+
+async def close_cache() -> None:
+    global cache
+    if cache is not None:
+        await cache.close()
+        cache = None

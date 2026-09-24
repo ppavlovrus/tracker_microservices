@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, Path, Query
 from task_tracker_common.contracts.base import INT4_MAX
 from task_tracker_common.contracts.commands import TaskCreationContract, TaskUpdatePayloadContract
 
-from ...config import RPC_TIMEOUT
+from ...core.config import RPC_TIMEOUT
 from ..deps import RabbitMQDep, TasksServiceDep
 from ..schemas.task import (
     TaskCreate,

@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from ...config import RPC_TIMEOUT
+from ...core.config import RPC_TIMEOUT
 from ..schemas.comment import (
     CommentCreate,
     CommentListResponse,

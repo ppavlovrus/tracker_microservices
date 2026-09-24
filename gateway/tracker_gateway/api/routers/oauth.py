@@ -11,7 +11,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 
-from ...config import (
+from ...core.config import (
     COOKIE_SECURE,
     OAUTH_HTTP_TIMEOUT,
     SESSION_COOKIE_NAME,

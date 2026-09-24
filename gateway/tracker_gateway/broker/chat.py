@@ -14,11 +14,14 @@ deliver messages across instances.
 import asyncio
 import json
 import logging
+from contextlib import suppress
 from typing import Any
 
 from fastapi import WebSocket
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
+
+from ..core.config import CHAT_CHANNEL, CHAT_ENABLED, CHAT_HISTORY_SIZE, REDIS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -157,3 +160,33 @@ class ChatHub:
                 dead.append(websocket)
         for websocket in dead:
             self._connections.discard(websocket)
+
+
+# ── Lifecycle ────────────────────────────────────────────────
+
+hub: ChatHub | None = None
+listener_task: asyncio.Task | None = None
+
+
+async def init_chat() -> ChatHub | None:
+    """Start the hub and its pub/sub listener, or nothing if chat is off."""
+    global hub, listener_task
+    if not CHAT_ENABLED:
+        return None
+    hub = ChatHub(redis_url=REDIS_URL, channel=CHAT_CHANNEL, history_size=CHAT_HISTORY_SIZE)
+    await hub.connect()
+    listener_task = asyncio.create_task(hub.run_listener())
+    return hub
+
+
+async def close_chat() -> None:
+    """Stop the listener before the hub it reads from."""
+    global hub, listener_task
+    if listener_task is not None:
+        listener_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await listener_task
+        listener_task = None
+    if hub is not None:
+        await hub.close()
+        hub = None

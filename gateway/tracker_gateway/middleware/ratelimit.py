@@ -16,10 +16,15 @@ limiter must never become a self-inflicted outage.
 
 import logging
 
+from fastapi.responses import JSONResponse
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
-from .metrics import RATE_LIMIT_DECISIONS
+from ..core.config import RATE_LIMIT_CAPACITY, RATE_LIMIT_ENABLED, RATE_LIMIT_REFILL_RATE, REDIS_URL
+from ..core.metrics import RATE_LIMIT_DECISIONS
 
 logger = logging.getLogger(__name__)
 
@@ -139,3 +144,72 @@ class RateLimiter:
         is_allowed = bool(int(allowed))
         RATE_LIMIT_DECISIONS.labels(decision="allowed" if is_allowed else "blocked").inc()
         return is_allowed, int(float(tokens)), float(retry_after)
+
+
+# ── Lifecycle ────────────────────────────────────────────────
+
+limiter: RateLimiter | None = None
+
+
+async def init_rate_limiter() -> RateLimiter:
+    """Open the limiter connection. Best-effort: fails open."""
+    global limiter
+    limiter = RateLimiter(
+        redis_url=REDIS_URL,
+        capacity=RATE_LIMIT_CAPACITY,
+        refill_rate=RATE_LIMIT_REFILL_RATE,
+        enabled=RATE_LIMIT_ENABLED,
+    )
+    await limiter.connect()
+    return limiter
+
+
+async def close_rate_limiter() -> None:
+    global limiter
+    if limiter is not None:
+        await limiter.close()
+        limiter = None
+
+
+# ── Middleware ───────────────────────────────────────────────
+
+# Paths that bypass rate limiting (health checks, docs, metrics, static assets)
+RATE_LIMIT_EXEMPT = ("/health", "/docs", "/redoc", "/openapi.json", "/metrics")
+
+
+def _is_exempt(path: str) -> bool:
+    """Return True for paths that should never be rate limited."""
+    return path.startswith("/static") or path in RATE_LIMIT_EXEMPT
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Per-IP token-bucket rate limiting. Fails open if Redis is unavailable.
+
+    ``limiter`` is read through the module global on every request rather than
+    captured at construction: the lifespan fills it after the app object is
+    already built, so a value bound here would stay None forever.
+    """
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if limiter is None or _is_exempt(request.url.path):
+            return await call_next(request)
+
+        ip = request.client.host if request.client else "unknown"
+        allowed, remaining, retry_after = await limiter.check(ip)
+
+        if not allowed:
+            logger.warning(f"Rate limit exceeded for {ip} on {request.url.path}")
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded"},
+                headers={
+                    "Retry-After": str(max(1, int(retry_after) + 1)),
+                    "X-RateLimit-Limit": str(limiter.capacity),
+                    "X-RateLimit-Remaining": "0",
+                },
+            )
+
+        response = await call_next(request)
+        response.headers["X-RateLimit-Limit"] = str(limiter.capacity)
+        response.headers["X-RateLimit-Remaining"] = str(remaining)
+        return response

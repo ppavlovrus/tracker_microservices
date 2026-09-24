@@ -11,7 +11,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 
-from ...config import (
+from ...core.config import (
     COOKIE_SECURE,
     SESSION_COOKIE_NAME,
     SESSION_TTL,

@@ -37,7 +37,7 @@ from task_tracker_common.contracts.responses import (
     UserList,
 )
 
-from ..config import RPC_TIMEOUT
+from ..core.config import RPC_TIMEOUT
 from ..core.exceptions import (
     BusProtocolError,
     BusTimeoutError,

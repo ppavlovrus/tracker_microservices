@@ -22,7 +22,7 @@ from collections.abc import AsyncGenerator
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ...config import SESSION_COOKIE_NAME, SSE_HEARTBEAT_INTERVAL
+from ...core.config import SESSION_COOKIE_NAME, SSE_HEARTBEAT_INTERVAL
 
 logger = logging.getLogger(__name__)
 

@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ...config import (
+from ...core.config import (
     CHAT_HEARTBEAT_INTERVAL,
     CHAT_HEARTBEAT_TIMEOUT,
     CHAT_MAX_MESSAGE_LENGTH,

@@ -19,10 +19,10 @@ from task_tracker_common.contracts.base import Contract
 from task_tracker_common.contracts.commands import TaskCreationContract, TaskUpdatePayloadContract
 from task_tracker_common.contracts.responses import TaskData, TaskList, TaskStats, TaskTag
 
+from ..broker.events import EventsHub
 from ..broker.tasks_client import TasksBusClient
-from ..cache import Cache
-from ..config import CACHE_TTL_TASK, CACHE_TTL_TASKS_LIST
-from ..events import EventsHub
+from ..core.config import CACHE_TTL_TASK, CACHE_TTL_TASKS_LIST
+from ..storage.cache import Cache
 
 logger = logging.getLogger(__name__)
 

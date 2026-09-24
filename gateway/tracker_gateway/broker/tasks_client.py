@@ -34,7 +34,7 @@ from task_tracker_common.contracts.responses import (
     TaskTags,
 )
 
-from ..config import RPC_TIMEOUT
+from ..core.config import RPC_TIMEOUT
 from ..core.exceptions import (
     BusProtocolError,
     BusTimeoutError,
