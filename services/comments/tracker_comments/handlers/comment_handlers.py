@@ -7,6 +7,19 @@ from ..repositories.comment_repository import CommentRepository
 
 logger = logging.getLogger(__name__)
 
+# Columns that come back from asyncpg as datetimes. The transport is
+# json.dumps, which cannot serialise one, so every handler that returns a
+# comment has to convert them -- once, here, instead of four times below.
+TIMESTAMP_FIELDS = ("created_at", "updated_at")
+
+
+def _serialize_timestamps(comment: dict[str, Any]) -> dict[str, Any]:
+    """Replace the datetime columns of one comment with ISO strings."""
+    for field in TIMESTAMP_FIELDS:
+        if comment.get(field):
+            comment[field] = comment[field].isoformat()
+    return comment
+
 
 class CommentHandlers:
     """Handlers for comment-related commands."""
@@ -44,11 +57,7 @@ class CommentHandlers:
             # Create comment
             comment = await self.repository.create(data)
 
-            # Convert timestamps to strings for JSON serialization
-            if comment.get("created_at"):
-                comment["created_at"] = comment["created_at"].isoformat()
-            if comment.get("updated_at"):
-                comment["updated_at"] = comment["updated_at"].isoformat()
+            _serialize_timestamps(comment)
 
             logger.info(f"Comment created successfully: ID={comment['id']}")
 
@@ -79,11 +88,7 @@ class CommentHandlers:
             if not comment:
                 return {"success": False, "error": "Comment not found"}
 
-            # Convert timestamps to strings for JSON
-            if comment.get("created_at"):
-                comment["created_at"] = comment["created_at"].isoformat()
-            if comment.get("updated_at"):
-                comment["updated_at"] = comment["updated_at"].isoformat()
+            _serialize_timestamps(comment)
 
             logger.debug(f"Comment retrieved: ID={comment_id}")
 
@@ -119,11 +124,7 @@ class CommentHandlers:
             if not comment:
                 return {"success": False, "error": "Comment not found"}
 
-            # Convert timestamps to strings for JSON
-            if comment.get("created_at"):
-                comment["created_at"] = comment["created_at"].isoformat()
-            if comment.get("updated_at"):
-                comment["updated_at"] = comment["updated_at"].isoformat()
+            _serialize_timestamps(comment)
 
             logger.info(f"Comment updated successfully: ID={comment_id}")
 
@@ -182,12 +183,8 @@ class CommentHandlers:
             comments = await self.repository.get_by_task_id(task_id)
             total = await self.repository.count_by_task_id(task_id)
 
-            # Convert timestamps to strings for JSON
             for comment in comments:
-                if comment.get("created_at"):
-                    comment["created_at"] = comment["created_at"].isoformat()
-                if comment.get("updated_at"):
-                    comment["updated_at"] = comment["updated_at"].isoformat()
+                _serialize_timestamps(comment)
 
             logger.debug(f"Listed {len(comments)} comments for task_id={task_id}")
 

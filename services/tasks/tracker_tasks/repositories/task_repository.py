@@ -30,6 +30,42 @@ _TAGS_AGG = """
 """
 
 
+# Columns a partial update is allowed to touch, in the order they are bound.
+UPDATABLE_FIELDS = ("title", "description", "status_id", "deadline_start", "deadline_end")
+
+
+def _build_update(data: dict[str, Any], task_id: int) -> tuple[str, list[Any]] | None:
+    """Compose the UPDATE for the fields the caller actually named.
+
+    Returns the query and its bound values, or None when the caller named
+    nothing. Placeholders are numbered from the values list itself, so the
+    ``updated_at`` and ``WHERE`` parameters cannot drift out of step with it.
+    """
+    set_clauses = []
+    values: list[Any] = []
+
+    for field in UPDATABLE_FIELDS:
+        if field in data:
+            set_clauses.append(f"{field} = ${len(values) + 1}")
+            values.append(data[field])
+
+    if not set_clauses:
+        return None
+
+    set_clauses.append(f"updated_at = ${len(values) + 1}")
+    values.append(datetime.utcnow())
+    values.append(task_id)
+
+    query = f"""
+        UPDATE task
+        SET {", ".join(set_clauses)}
+        WHERE id = ${len(values)}
+        RETURNING id, title, description, status_id, creator_id,
+                  deadline_start, deadline_end, created_at, updated_at
+    """
+    return query, values
+
+
 class TaskRepository:
     """Repository for Task entity operations."""
 
@@ -164,36 +200,11 @@ class TaskRepository:
         Returns:
             Updated task data or None if not found
         """
-        # Build dynamic UPDATE query for provided fields only
-        set_clauses = []
-        values = []
-        param_index = 1
-
-        for field in ["title", "description", "status_id", "deadline_start", "deadline_end"]:
-            if field in data:
-                set_clauses.append(f"{field} = ${param_index}")
-                values.append(data[field])
-                param_index += 1
-
-        if not set_clauses:
+        built = _build_update(data, task_id)
+        if built is None:
             # No fields to update, just return current task
             return await self.get_by_id(task_id)
-
-        # Add updated_at
-        set_clauses.append(f"updated_at = ${param_index}")
-        values.append(datetime.utcnow())
-        param_index += 1
-
-        # Add task_id for WHERE clause
-        values.append(task_id)
-
-        query = f"""
-            UPDATE task
-            SET {", ".join(set_clauses)}
-            WHERE id = ${param_index}
-            RETURNING id, title, description, status_id, creator_id,
-                      deadline_start, deadline_end, created_at, updated_at
-        """
+        query, values = built
 
         async with self.pool.acquire() as conn, conn.transaction():
             old_status = None
@@ -206,17 +217,28 @@ class TaskRepository:
                     logger.warning(f"Task not found for update: ID={task_id}")
                     return None
 
-            row = await conn.fetchrow(query, *values)
+            return await self._apply_update(conn, query, values, task_id, old_status)
 
-            if row is None:
-                logger.warning(f"Task not found for update: ID={task_id}")
-                return None
+    async def _apply_update(
+        self,
+        conn: asyncpg.Connection,
+        query: str,
+        values: list[Any],
+        task_id: int,
+        old_status: int | None,
+    ) -> dict[str, Any] | None:
+        """Run the prepared UPDATE and keep the per-status counters in step."""
+        row = await conn.fetchrow(query, *values)
 
-            if old_status is not None and row["status_id"] != old_status:
-                await self._bump_status_counts(conn, {old_status: -1, row["status_id"]: 1})
+        if row is None:
+            logger.warning(f"Task not found for update: ID={task_id}")
+            return None
 
-            logger.info(f"Task updated: ID={task_id}")
-            return dict(row)
+        if old_status is not None and row["status_id"] != old_status:
+            await self._bump_status_counts(conn, {old_status: -1, row["status_id"]: 1})
+
+        logger.info(f"Task updated: ID={task_id}")
+        return dict(row)
 
     async def delete(self, task_id: int) -> bool:
         """

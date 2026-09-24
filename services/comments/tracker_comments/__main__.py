@@ -4,6 +4,7 @@ import asyncio
 import logging
 import signal
 import sys
+from collections.abc import Awaitable, Callable
 
 import asyncpg
 from aio_pika import IncomingMessage
@@ -30,11 +31,17 @@ from .repositories import CommentRepository
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# One command handler: takes the command payload, answers with a response dict.
+CommandHandler = Callable[[dict], Awaitable[dict]]
+
 # Global instances
 db_pool: asyncpg.Pool = None
 rabbitmq_client: RabbitMQClient = None
 comment_handlers: CommentHandlers = None
 shutdown_event = None
+
+# Command name -> handler, filled by startup() once the handlers exist.
+dispatch: dict[str, CommandHandler] = {}
 
 
 async def create_db_pool() -> asyncpg.Pool:
@@ -58,6 +65,22 @@ async def create_db_pool() -> asyncpg.Pool:
     return pool
 
 
+def build_dispatch(handlers: CommentHandlers) -> dict[str, CommandHandler]:
+    """Map every command name on the wire to the coroutine that answers it.
+
+    A table rather than an if/elif ladder: a new command is one line, and the
+    dispatcher below stays flat no matter how many there are. Built once at
+    startup, when the handlers exist.
+    """
+    return {
+        "create_comment": handlers.handle_create_comment,
+        "get_comment": handlers.handle_get_comment,
+        "update_comment": handlers.handle_update_comment,
+        "delete_comment": handlers.handle_delete_comment,
+        "list_comments_by_task": handlers.handle_list_comments_by_task,
+    }
+
+
 async def handle_command(payload: dict, message: IncomingMessage) -> dict:
     """
     Handle incoming command from RabbitMQ.
@@ -74,26 +97,13 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
 
     logger.debug(f"Handling command: {command}")
 
+    handler = dispatch.get(command)
+    if handler is None:
+        logger.warning(f"Unknown command: {command}")
+        return {"success": False, "error": f"Unknown command: {command}", "error_type": "UnknownCommand"}
+
     try:
-        if command == "create_comment":
-            return await comment_handlers.handle_create_comment(data)
-
-        elif command == "get_comment":
-            return await comment_handlers.handle_get_comment(data)
-
-        elif command == "update_comment":
-            return await comment_handlers.handle_update_comment(data)
-
-        elif command == "delete_comment":
-            return await comment_handlers.handle_delete_comment(data)
-
-        elif command == "list_comments_by_task":
-            return await comment_handlers.handle_list_comments_by_task(data)
-
-        else:
-            logger.warning(f"Unknown command: {command}")
-            return {"success": False, "error": f"Unknown command: {command}", "error_type": "UnknownCommand"}
-
+        return await handler(data)
     except Exception as e:
         logger.error(f"Error handling command {command}: {e}", exc_info=True)
         return {"success": False, "error": str(e), "error_type": type(e).__name__}
@@ -101,7 +111,7 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
 
 async def startup():
     """Initialize service components."""
-    global db_pool, rabbitmq_client, comment_handlers
+    global db_pool, rabbitmq_client, comment_handlers, dispatch
 
     logger.info("=" * 60)
     logger.info(f"Starting {SERVICE_NAME}...")
@@ -114,6 +124,7 @@ async def startup():
         # Initialize repository and handlers
         comment_repository = CommentRepository(db_pool)
         comment_handlers = CommentHandlers(comment_repository)
+        dispatch = build_dispatch(comment_handlers)
 
         logger.info("Repository and handlers initialized")
 

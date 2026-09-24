@@ -101,6 +101,14 @@ class EventsHub:
 
     # -- pub/sub listener --------------------------------------------------
 
+    async def _consume(self) -> None:
+        """Subscribe and fan events out until the subscription breaks."""
+        async with self._client.pubsub() as pubsub:
+            await pubsub.subscribe(self._channel)
+            async for item in pubsub.listen():
+                if item["type"] == "message":
+                    self._fan_out(item["data"])
+
     async def run_listener(self) -> None:
         """Subscribe to the channel and fan events out to local queues.
 
@@ -113,11 +121,7 @@ class EventsHub:
                 await self.connect()
                 continue
             try:
-                async with self._client.pubsub() as pubsub:
-                    await pubsub.subscribe(self._channel)
-                    async for item in pubsub.listen():
-                        if item["type"] == "message":
-                            self._fan_out(item["data"])
+                await self._consume()
             except asyncio.CancelledError:
                 raise
             except Exception as e:

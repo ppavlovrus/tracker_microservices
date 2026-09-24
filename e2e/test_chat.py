@@ -46,12 +46,12 @@ async def recv_frame(ws, want_type: str, timeout: float = 5.0) -> dict:
             return frame
 
 
-async def main() -> None:
-    cookie = login()
-    headers = {"Cookie": cookie}
-    ok = lambda name: print(f"ok: {name}")
+def ok(name: str) -> None:
+    print(f"ok: {name}")
 
-    # 1. Unauthenticated connection is closed with 4401
+
+async def check_unauthenticated() -> None:
+    """Unauthenticated connection is closed with 4401."""
     async with websockets.connect(WS_URL) as ws:
         closed = False
         try:
@@ -62,13 +62,18 @@ async def main() -> None:
         assert closed, "unauthenticated socket was not closed"
     ok("unauthenticated connect rejected with 4401")
 
-    # 2. Two clients: both get history on connect, message reaches both
+
+async def check_fan_out(headers: dict) -> str:
+    """Two clients: both get history on connect, a message reaches both.
+
+    Returns the marker text, which the history check looks for afterwards.
+    """
     async with (
         websockets.connect(WS_URL, additional_headers=headers) as a,
         websockets.connect(WS_URL, additional_headers=headers) as b,
     ):
         hist_a = await recv_frame(a, "history")
-        hist_b = await recv_frame(b, "history")
+        await recv_frame(b, "history")
         assert isinstance(hist_a["messages"], list)
         ok("history frame delivered on connect")
 
@@ -81,15 +86,24 @@ async def main() -> None:
         assert msg_a["id"] == msg_b["id"], "clients saw different message ids"
         ok("message fanned out to both clients (sender included)")
 
-    # 3. New client sees the message in history (Redis LIST persistence)
+    return marker
+
+
+async def check_history_replay(headers: dict, marker: str) -> None:
+    """A new client sees the message in history (Redis LIST persistence)."""
     async with websockets.connect(WS_URL, additional_headers=headers) as c:
         hist = await recv_frame(c, "history")
         texts = [m["text"] for m in hist["messages"]]
         assert marker in texts, f"history misses the message: {texts[-3:]}"
         ok("new client receives the message via history replay")
 
-    # 4. Heartbeat: server pings a silent client; without pongs it closes
-    #    the connection (requires short CHAT_HEARTBEAT_* on the gateway)
+
+async def check_silent_client_dropped(headers: dict) -> None:
+    """The server pings a silent client and, without pongs, closes it.
+
+    Requires short CHAT_HEARTBEAT_* on the gateway: with the compose defaults
+    (interval 25s) the first ping arrives long after the 10s wait below.
+    """
     async with websockets.connect(WS_URL, additional_headers=headers) as d:
         await recv_frame(d, "history")
         got_ping = False
@@ -101,11 +115,13 @@ async def main() -> None:
         except websockets.ConnectionClosed as e:
             assert got_ping, "connection closed before any ping was seen"
             assert e.rcvd.code == 1001, f"expected 1001, got {e.rcvd.code}"
-        except TimeoutError:
-            raise AssertionError("silent client was never disconnected")
+        except TimeoutError as exc:
+            raise AssertionError("silent client was never disconnected") from exc
     ok("silent client is pinged, then dropped on heartbeat timeout")
 
-    # 5. A client that answers pings stays connected past the timeout
+
+async def check_answering_client_survives(headers: dict) -> None:
+    """A client that answers pings stays connected past the timeout."""
     async with websockets.connect(WS_URL, additional_headers=headers) as e:
         await recv_frame(e, "history")
         for _ in range(2):
@@ -114,6 +130,16 @@ async def main() -> None:
         msg = await recv_frame(e, "message")
         assert msg["text"] == "still alive"
         ok("client answering pings survives past the heartbeat timeout")
+
+
+async def main() -> None:
+    headers = {"Cookie": login()}
+
+    await check_unauthenticated()
+    marker = await check_fan_out(headers)
+    await check_history_replay(headers, marker)
+    await check_silent_client_dropped(headers)
+    await check_answering_client_survives(headers)
 
     print("ALL PASSED")
 

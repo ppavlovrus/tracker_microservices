@@ -32,24 +32,9 @@ exclude = [
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "C4", "C90"]
 
 [tool.ruff.lint.mccabe]
+# Enforced everywhere, with no per-file exemptions: the ladders and the
+# do-everything functions that used to need them are gone.
 max-complexity = 6
-
-# C901 ratchet. The cap above is the target and it is enforced everywhere
-# except the files listed here, which still exceed it. Each is removed from
-# this list as its functions are reworked -- so the bar can only move one way,
-# and a newly written complex function is rejected immediately rather than
-# blending into a backlog.
-[tool.ruff.lint.per-file-ignores]
-"e2e/test_chat.py" = ["C901"]
-"gateway/tracker_gateway/api/routers/chat.py" = ["C901"]
-"gateway/tracker_gateway/api/routers/oauth.py" = ["C901"]
-"gateway/tracker_gateway/api/routers/tags.py" = ["C901"]
-"gateway/tracker_gateway/broker/chat.py" = ["C901"]
-"gateway/tracker_gateway/broker/events.py" = ["C901"]
-"services/comments/tracker_comments/__main__.py" = ["C901"]
-"services/comments/tracker_comments/handlers/comment_handlers.py" = ["C901"]
-"services/tags/tracker_tags/__main__.py" = ["C901"]
-"services/tasks/tracker_tasks/repositories/task_repository.py" = ["C901"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

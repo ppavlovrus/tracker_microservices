@@ -123,6 +123,14 @@ class ChatHub:
 
     # -- pub/sub listener ----------------------------------------------------
 
+    async def _consume(self) -> None:
+        """Subscribe and forward messages until the subscription breaks."""
+        async with self._client.pubsub() as pubsub:
+            await pubsub.subscribe(self._channel)
+            async for item in pubsub.listen():
+                if item["type"] == "message":
+                    await self._broadcast(item["data"])
+
     async def run_listener(self) -> None:
         """Subscribe to the channel and fan messages out to local sockets.
 
@@ -135,11 +143,7 @@ class ChatHub:
                 await self.connect()
                 continue
             try:
-                async with self._client.pubsub() as pubsub:
-                    await pubsub.subscribe(self._channel)
-                    async for item in pubsub.listen():
-                        if item["type"] == "message":
-                            await self._broadcast(item["data"])
+                await self._consume()
             except asyncio.CancelledError:
                 raise
             except Exception as e:
