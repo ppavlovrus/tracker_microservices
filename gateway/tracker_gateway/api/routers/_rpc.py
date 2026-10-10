@@ -59,9 +59,16 @@ async def call_worker(
         raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     if not response.get("success"):
-        status = STATUS_BY_CODE.get(response.get("code"), failure_status)
+        code = response.get("code")
+        status = STATUS_BY_CODE.get(code, failure_status)
         detail = response.get("error", failure_detail)
         logger.warning(f"{service} command {command} failed ({status}): {detail}")
+        if code is ErrorCode.INTERNAL:
+            # A typed worker puts the driver's words in ``error`` on purpose:
+            # they are the operator's half of the story, logged one line up.
+            # The client gets the generic line, the way the typed clients
+            # hand out nothing else either.
+            detail = "Internal server error"
         raise HTTPException(status_code=status, detail=detail)
 
     return response["data"]

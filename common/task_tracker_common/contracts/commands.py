@@ -160,3 +160,39 @@ class UserUpsertYandexContract(Contract):
 class UserListContract(Contract):
     limit: int = Field(..., ge=1, le=100)
     offset: int = Field(..., ge=0)
+
+
+# -- tags -------------------------------------------------------------------
+#
+# A tag update is a rename, not a partial edit: ``name`` is required in the
+# update payload, unlike the optional fields of the tasks/users contracts.
+
+
+class TagCreationContract(Contract):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class TagUpdatePayloadContract(Contract):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class TagUpdateContract(Contract):
+    id: RowId
+    update: TagUpdatePayloadContract
+
+
+class TagGetByIdContract(Contract):
+    id: RowId
+
+
+class TagGetByNameContract(Contract):
+    name: str = Field(..., min_length=1, max_length=100)
+
+
+class TagDeleteContract(Contract):
+    id: RowId
+
+
+class TagListContract(Contract):
+    limit: int = Field(..., ge=1, le=100)
+    offset: int = Field(..., ge=0)

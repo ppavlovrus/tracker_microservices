@@ -13,9 +13,16 @@ import pytest
 from _pytest._code import ExceptionInfo
 from pydantic import ValidationError
 from task_tracker_common.contracts.base import INT4_MAX, INT8_MAX, MAX_FREE_TEXT
-from task_tracker_common.contracts.commands import TaskCreationContract, TaskUpdatePayloadContract
+from task_tracker_common.contracts.commands import (
+    TagCreationContract,
+    TagGetByIdContract,
+    TagListContract,
+    TaskCreationContract,
+    TaskUpdatePayloadContract,
+)
 from tracker_gateway.api.schemas.attachment import AttachmentCreate
 from tracker_gateway.api.schemas.comment import CommentCreate, CommentUpdate
+from tracker_gateway.api.schemas.tags import TagCreate, TagUpdate
 from tracker_gateway.api.schemas.task import TaskCreate, TaskUpdate
 from tracker_gateway.api.schemas.user import UserUpdate
 
@@ -189,3 +196,44 @@ def test_deadline_end_after_start_is_allowed():
 def test_bus_update_contract_keeps_the_deadline_rule():
     with pytest.raises(ValidationError):
         TaskUpdatePayloadContract(deadline_start="2027-06-01", deadline_end="2027-01-01")
+
+
+# -- tags: a name is the whole tag -----------------------------------------
+
+
+@pytest.mark.parametrize("name", ["", "x" * 101])
+def test_tag_rejects_a_name_the_column_cannot_hold(name):
+    with pytest.raises(ValidationError) as exc:
+        TagCreate(name=name)
+    assert field_of(exc) == ("name",)
+
+
+def test_tag_name_at_the_cap_is_allowed():
+    assert len(TagCreate(name="x" * 100).name) == 100
+
+
+def test_tag_update_requires_a_name():
+    """A tag update is a rename, not a partial edit: naming nothing is refused."""
+    with pytest.raises(ValidationError) as exc:
+        TagUpdate()
+    assert field_of(exc) == ("name",)
+
+
+def test_tag_bus_creation_contract_holds_the_same_name_line():
+    with pytest.raises(ValidationError):
+        TagCreationContract(name="x" * 101)
+
+
+@pytest.mark.parametrize("bad", [0, -7, INT4_MAX + 1])
+def test_tag_bus_contract_rejects_unusable_id(bad):
+    with pytest.raises(ValidationError):
+        TagGetByIdContract(id=bad)
+
+
+@pytest.mark.parametrize(
+    "page",
+    [{"limit": 0, "offset": 0}, {"limit": 101, "offset": 0}, {"limit": 1, "offset": -1}],
+)
+def test_tag_bus_list_contract_bounds_the_page(page):
+    with pytest.raises(ValidationError):
+        TagListContract(**page)

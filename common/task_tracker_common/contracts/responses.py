@@ -66,6 +66,27 @@ class TaskTags(Contract):
     tags: list[TaskTag]
 
 
+class TagData(Contract):
+    """The tags vertical's own answer shape.
+
+    Deliberately not ``TaskTag``: that one is a nested fact inside a task
+    answer, this one is a standalone contract that can evolve separately.
+    """
+
+    id: int
+    name: str
+
+
+class TagDelete(Contract):
+    id: int
+    deleted: Literal[True]
+
+
+class TagList(Contract):
+    total: int
+    tags: list[TagData]
+
+
 class UserData(Contract):
     """A user as the rest of the platform is allowed to see one.
 

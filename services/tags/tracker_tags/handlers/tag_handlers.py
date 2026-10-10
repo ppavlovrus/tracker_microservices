@@ -1,217 +1,133 @@
-"""Tag command handlers for RabbitMQ messages."""
+"""Tag command handlers for RabbitMQ messages.
+
+A handler receives a command contract the dispatcher has already validated,
+and answers with an envelope built from the shared response contracts. No
+raw payload dicts, no hand-written ``{"success": ...}`` literals.
+
+Uniqueness is not pre-checked with a SELECT: two concurrent creates would
+both pass such a check and one would still hit the constraint. The database
+is the only judge; ``UniqueViolationError`` is caught and translated.
+"""
 
 import logging
 from typing import Any
 
-from task_tracker_common.contracts.responses import ErrorCode, rpc_error
+import asyncpg
+from task_tracker_common.contracts.commands import (
+    TagCreationContract,
+    TagDeleteContract,
+    TagGetByIdContract,
+    TagGetByNameContract,
+    TagListContract,
+    TagUpdateContract,
+)
+from task_tracker_common.contracts.responses import (
+    ErrorCode,
+    TagData,
+    TagDelete,
+    TagList,
+    rpc_error,
+    rpc_ok,
+)
 
 from ..repositories.tag_repository import TagRepository
 
 logger = logging.getLogger(__name__)
 
+# The gateway turns this into the 404 body, so the wording is observable.
+TAG_NOT_FOUND = "Tag not found"
 
-def _internal(exc: Exception) -> dict[str, Any]:
-    """The answer to an exception nobody classified.
+Envelope = dict[str, Any]
 
-    ``str(exc)`` belongs in the log and stays there: an unclassified failure
-    here is usually a driver message naming a table, a constraint and the
-    offending value, and that is not something an HTTP client should be
-    handed. The classified answers above it keep their own wording.
+
+def _conflict(exc: asyncpg.UniqueViolationError) -> Envelope:
+    """Translate a unique-constraint violation into a CONFLICT envelope.
+
+    ``tag_name_key`` is the only unique constraint on the table, so there is
+    nothing to branch on. ``error_type`` still names the field: it is the
+    machine-readable half the gateway picks its domain error from, rather
+    than parsing the message.
     """
-    return rpc_error(ErrorCode.INTERNAL, "Internal error", type(exc).__name__)
+    return rpc_error(ErrorCode.CONFLICT, "Tag with this name already exists", "name")
 
 
 class TagHandlers:
     """Handlers for tag-related commands."""
 
     def __init__(self, repository: TagRepository):
-        """
-        Initialize handlers.
-
-        Args:
-            repository: TagRepository instance
-        """
+        """Initialize handlers with the repository they read and write through."""
         self.repository = repository
 
-    async def handle_create_tag(self, data: dict[str, Any]) -> dict[str, Any]:
+    async def handle_create_tag(self, command: TagCreationContract) -> Envelope:
+        """Handle ``create_tag``: insert the row, answer with the stored tag."""
+        try:
+            tag = await self.repository.create(command.model_dump())
+        except asyncpg.UniqueViolationError as e:
+            logger.warning(f"Tag creation conflict: {e.constraint_name}")
+            return _conflict(e)
+
+        logger.info(f"Tag created successfully: ID={tag['id']}")
+        return rpc_ok(TagData, tag)
+
+    async def handle_get_tag(self, command: TagGetByIdContract) -> Envelope:
+        """Handle ``get_tag``: one tag row by id."""
+        tag = await self.repository.get_by_id(command.id)
+
+        if tag is None:
+            logger.warning(f"Tag not found: ID={command.id}")
+            return rpc_error(ErrorCode.NOT_FOUND, TAG_NOT_FOUND)
+
+        return rpc_ok(TagData, tag)
+
+    async def handle_get_tag_by_name(self, command: TagGetByNameContract) -> Envelope:
+        """Handle ``get_tag_by_name``: resolve a tag by name.
+
+        The tasks gateway uses this to find a tag before linking it to a
+        task, creating it when the name is new.
         """
-        Handle create_tag command.
+        tag = await self.repository.get_by_name(command.name)
 
-        Args:
-            data: Tag data from command
+        if tag is None:
+            logger.warning(f"Tag not found by name: {command.name}")
+            return rpc_error(ErrorCode.NOT_FOUND, TAG_NOT_FOUND)
 
-        Returns:
-            Response with created tag or error
+        return rpc_ok(TagData, tag)
+
+    async def handle_update_tag(self, command: TagUpdateContract) -> Envelope:
+        """Handle ``update_tag``: rename a tag.
+
+        Renaming to a name another tag already holds is a conflict the
+        database reports, not something to pre-check -- a pre-check would
+        race a concurrent create and lose.
         """
         try:
-            # Validate required fields
-            if not data.get("name"):
-                return {"success": False, "error": "Tag name is required"}
+            tag = await self.repository.update(command.id, command.update.model_dump())
+        except asyncpg.UniqueViolationError as e:
+            logger.warning(f"Tag update conflict: {e.constraint_name}")
+            return _conflict(e)
 
-            # Check if tag with this name already exists
-            existing_tag = await self.repository.get_by_name(data.get("name"))
-            if existing_tag:
-                return {"success": False, "error": "Tag with this name already exists"}
+        if tag is None:
+            logger.warning(f"Tag not found for update: ID={command.id}")
+            return rpc_error(ErrorCode.NOT_FOUND, TAG_NOT_FOUND)
 
-            # Create tag
-            tag = await self.repository.create(data)
+        logger.info(f"Tag updated successfully: ID={command.id}")
+        return rpc_ok(TagData, tag)
 
-            logger.info(f"Tag created successfully: ID={tag['id']}")
+    async def handle_delete_tag(self, command: TagDeleteContract) -> Envelope:
+        """Handle ``delete_tag``: remove the row (task links cascade)."""
+        deleted = await self.repository.delete(command.id)
 
-            return {"success": True, "data": tag}
+        if not deleted:
+            logger.warning(f"Tag not found for deletion: ID={command.id}")
+            return rpc_error(ErrorCode.NOT_FOUND, TAG_NOT_FOUND)
 
-        except Exception as e:
-            logger.error(f"Error creating tag: {e}", exc_info=True)
-            return _internal(e)
+        logger.info(f"Tag deleted successfully: ID={command.id}")
+        return rpc_ok(TagDelete, {"id": command.id, "deleted": True})
 
-    async def handle_get_tag(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle get_tag command.
+    async def handle_list_tags(self, command: TagListContract) -> Envelope:
+        """Handle ``list_tags``: one page, and the total it comes from."""
+        tags = await self.repository.get_all(limit=command.limit, offset=command.offset)
+        total = await self.repository.count_all()
 
-        Args:
-            data: Contains tag ID
-
-        Returns:
-            Response with tag data or error
-        """
-        try:
-            tag_id = data.get("id")
-
-            if not tag_id:
-                return {"success": False, "error": "Tag ID is required"}
-
-            tag = await self.repository.get_by_id(tag_id)
-
-            if not tag:
-                return {"success": False, "error": "Tag not found"}
-
-            logger.debug(f"Tag retrieved: ID={tag_id}")
-
-            return {"success": True, "data": tag}
-
-        except Exception as e:
-            logger.error(f"Error getting tag: {e}", exc_info=True)
-            return _internal(e)
-
-    async def handle_get_tag_by_name(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle get_tag_by_name command.
-
-        Args:
-            data: Contains tag name
-
-        Returns:
-            Response with tag data or error
-        """
-        try:
-            name = data.get("name")
-
-            if not name:
-                return {"success": False, "error": "Tag name is required"}
-
-            tag = await self.repository.get_by_name(name)
-
-            if not tag:
-                return {"success": False, "error": "Tag not found"}
-
-            logger.debug(f"Tag retrieved by name: {name}")
-
-            return {"success": True, "data": tag}
-
-        except Exception as e:
-            logger.error(f"Error getting tag by name: {e}", exc_info=True)
-            return _internal(e)
-
-    async def handle_update_tag(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle update_tag command.
-
-        Args:
-            data: Contains tag ID and update fields
-
-        Returns:
-            Response with updated tag or error
-        """
-        try:
-            tag_id = data.get("id")
-            update_data = data.get("update", {})
-
-            if not tag_id:
-                return {"success": False, "error": "Tag ID is required"}
-
-            if not update_data or not update_data.get("name"):
-                return {"success": False, "error": "Tag name is required for update"}
-
-            # Check if new name already exists (for another tag)
-            existing_tag = await self.repository.get_by_name(update_data["name"])
-            if existing_tag and existing_tag["id"] != tag_id:
-                return {"success": False, "error": "Tag with this name already exists"}
-
-            # Update tag
-            tag = await self.repository.update(tag_id, update_data)
-
-            if not tag:
-                return {"success": False, "error": "Tag not found"}
-
-            logger.info(f"Tag updated successfully: ID={tag_id}")
-
-            return {"success": True, "data": tag}
-
-        except Exception as e:
-            logger.error(f"Error updating tag: {e}", exc_info=True)
-            return _internal(e)
-
-    async def handle_delete_tag(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle delete_tag command.
-
-        Args:
-            data: Contains tag ID
-
-        Returns:
-            Response indicating success or error
-        """
-        try:
-            tag_id = data.get("id")
-
-            if not tag_id:
-                return {"success": False, "error": "Tag ID is required"}
-
-            deleted = await self.repository.delete(tag_id)
-
-            if not deleted:
-                return {"success": False, "error": "Tag not found"}
-
-            logger.info(f"Tag deleted successfully: ID={tag_id}")
-
-            return {"success": True, "data": {"deleted": True, "id": tag_id}}
-
-        except Exception as e:
-            logger.error(f"Error deleting tag: {e}", exc_info=True)
-            return _internal(e)
-
-    async def handle_list_tags(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Handle list_tags command.
-
-        Args:
-            data: Contains limit and offset
-
-        Returns:
-            Response with list of tags or error
-        """
-        try:
-            limit = data.get("limit", 100)
-            offset = data.get("offset", 0)
-
-            # Get tags and total count
-            tags = await self.repository.get_all(limit=limit, offset=offset)
-            total = await self.repository.count_all()
-
-            logger.debug(f"Listed {len(tags)} tags (total={total}, limit={limit}, offset={offset})")
-
-            return {"success": True, "data": {"tags": tags, "total": total}}
-
-        except Exception as e:
-            logger.error(f"Error listing tags: {e}", exc_info=True)
-            return _internal(e)
+        logger.debug(f"Listed {len(tags)} tags (total={total}, limit={command.limit}, offset={command.offset})")
+        return rpc_ok(TagList, {"tags": tags, "total": total})

@@ -29,15 +29,26 @@ async def test_create_tag_without_session_returns_401(client):
     assert response.status_code == 401
 
 
-async def test_create_tag_with_a_duplicate_name_returns_400(auth_client, make_tag):
-    # Recorded from the live API: the worker's human-readable text reaches
-    # the client verbatim, and the answer carries no machine-readable code,
-    # so the gateway falls back to this endpoint's failure status (400).
+async def test_create_tag_with_a_duplicate_name_returns_409(auth_client, make_tag):
+    # Recorded from the live API before the worker moved onto contracts, this
+    # answered 400 with free text and no code. The contracts refactor makes
+    # the database the only judge of uniqueness and classifies the collision
+    # as CONFLICT -- the same 409 a taken username or email gets.
     tag = await make_tag()
 
     response = await auth_client.post("/tags", json={"name": tag.name})
 
-    assert response.status_code == 400
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Tag with this name already exists"
+
+
+async def test_renaming_to_a_taken_name_returns_409(auth_client, make_tag):
+    first = await make_tag()
+    second = await make_tag()
+
+    response = await auth_client.put(f"/tags/{second.id}", json={"name": first.name})
+
+    assert response.status_code == 409
     assert response.json()["detail"] == "Tag with this name already exists"
 
 
@@ -142,6 +153,30 @@ async def test_delete_missing_tag_returns_404(auth_client):
     response = await auth_client.delete("/tags/999999")
     assert response.status_code == 404
     assert response.json()["detail"] == "Tag not found"
+
+
+@pytest.mark.parametrize("bad_id", [0, -1, 3_000_000_000])
+async def test_tag_paths_refuse_an_id_the_column_cannot_hold(auth_client, bad_id):
+    # Before the contracts refactor these were three different accidents:
+    # 0 answered 404 "Tag ID is required", negatives 404 "Tag not found",
+    # and anything past int4 a 500 from the driver. The bus contract now
+    # refuses the id before the database sees it, and the raw router maps
+    # the validation error to 400.
+    response = await auth_client.get(f"/tags/{bad_id}")
+    assert response.status_code == 400
+
+
+async def test_renaming_a_tag_to_its_own_name_succeeds(auth_client, make_tag):
+    # The old handler allowed this explicitly (``existing.id != tag_id``).
+    # The constraint allows it too: Postgres excludes the row's own old
+    # version from the uniqueness check, so the rename is a no-op that
+    # still answers 200.
+    tag = await make_tag()
+
+    response = await auth_client.put(f"/tags/{tag.id}", json={"name": tag.name})
+
+    assert response.status_code == 200
+    assert TagContract.model_validate(response.json()) == tag
 
 
 # --- tags through the tasks API ------------------------------------------------

@@ -15,9 +15,10 @@ import tracker_attachments.handlers.attachment_handlers as attachments
 import tracker_comments.handlers.comment_handlers as comments
 import tracker_tags.handlers.tag_handlers as tags
 import tracker_tasks.handlers.task_handlers as tasks
+from fastapi import HTTPException
 from task_tracker_common.contracts.responses import ErrorCode
 from tracker_gateway.api.errors import STATUS
-from tracker_gateway.api.routers._rpc import STATUS_BY_CODE
+from tracker_gateway.api.routers._rpc import STATUS_BY_CODE, call_worker
 from tracker_gateway.broker.tasks_client import MISSING_REFERENCE
 from tracker_gateway.core.exceptions import (
     BusProtocolError,
@@ -89,11 +90,11 @@ def test_attachments_reports_a_missing_task():
 
 @pytest.mark.parametrize(
     "module",
-    [comments, attachments, tags],
-    ids=["comments", "attachments", "tags"],
+    [comments, attachments],
+    ids=["comments", "attachments"],
 )
 def test_an_unclassified_failure_carries_no_driver_text(module):
-    """These three answer routers that put ``error`` straight into the body."""
+    """These two answer routers that put ``error`` straight into the body."""
     answer = module._internal(fk_violation("comment_task_id_fkey"))
 
     assert answer["code"] == ErrorCode.INTERNAL
@@ -103,13 +104,30 @@ def test_an_unclassified_failure_carries_no_driver_text(module):
         assert leaked not in str(answer), f"{leaked!r} reached the answer"
 
 
+def test_tags_reports_a_taken_name_as_a_conflict():
+    """The tags worker no longer pre-checks uniqueness: the constraint decides."""
+    exc = asyncpg.UniqueViolationError.new(
+        {
+            "C": "23505",
+            "M": 'duplicate key value violates unique constraint "tag_name_key"',
+            "n": "tag_name_key",
+        }
+    )
+
+    answer = tags._conflict(exc)
+
+    assert answer["code"] == ErrorCode.CONFLICT
+    assert answer["error"] == "Tag with this name already exists"
+    assert answer["error_type"] == "name"
+
+
 def test_the_typed_verticals_are_covered_by_the_status_table_instead():
-    """Tasks and users do send the driver text, and it stops at the gateway.
+    """Tasks, users and tags do send the driver text, and it stops at the gateway.
 
     Their dispatchers put ``str(exc)`` in the envelope on purpose -- it is the
     operator's half of the story and belongs in the gateway's log. What the
     client is told comes from this table and never from the worker, which is
-    why those two verticals need no ``_internal`` of their own.
+    why those verticals need no ``_internal`` of their own.
     """
     assert STATUS[UpstreamFailureError] == (500, "Internal server error")
     assert STATUS[BusProtocolError] == (500, "Internal server error")
@@ -142,3 +160,38 @@ def test_raw_routers_take_the_status_from_the_code(code, status):
 def test_an_answer_without_a_code_leaves_the_endpoint_in_charge():
     """Workers that cannot classify a failure still answer; the endpoint decides."""
     assert STATUS_BY_CODE.get(None, 418) == 418
+
+
+class _StubClient:
+    """A bus client answering one canned envelope."""
+
+    def __init__(self, envelope: dict):
+        self._envelope = envelope
+
+    async def call(self, *, queue_name, message, timeout):
+        return self._envelope
+
+
+async def test_a_raw_router_hides_an_unclassified_workers_text():
+    """A typed dispatcher puts the driver's words in ``error`` on purpose.
+
+    Until every vertical has a typed client, the raw router is the last stop
+    before the client: the words land in the log, never in the HTTP body.
+    """
+    driver_words = 'connection refused: postgres@db:5432 "task"'
+    stub = _StubClient({"success": False, "code": ErrorCode.INTERNAL, "error": driver_words})
+
+    with pytest.raises(HTTPException) as exc:
+        await call_worker(
+            stub,
+            queue="tags.commands",
+            service="Tags",
+            command="list_tags",
+            data={"limit": 1, "offset": 0},
+            timeout=5.0,
+            failure_status=500,
+            failure_detail="Unknown error",
+        )
+
+    assert exc.value.status_code == 500
+    assert exc.value.detail == "Internal server error"
