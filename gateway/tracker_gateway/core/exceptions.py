@@ -80,6 +80,12 @@ class CommentNotFoundError(GatewayError):
         super().__init__(f"Comment {comment_id} not found" if comment_id is not None else "Comment not found")
 
 
+class AttachmentNotFoundError(GatewayError):
+    def __init__(self, attachment_id: int | None = None) -> None:
+        self.attachment_id = attachment_id
+        super().__init__(f"Attachment {attachment_id} not found" if attachment_id is not None else "Attachment not found")
+
+
 class InvalidCredentialsError(GatewayError):
     """A login that must not say why it failed.
 

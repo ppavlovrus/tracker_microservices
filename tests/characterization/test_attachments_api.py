@@ -64,10 +64,19 @@ async def test_get_missing_attachment_returns_404(auth_client):
 async def test_attachment_paths_refuse_an_id_the_column_cannot_hold(auth_client, bad_id):
     # Before the contracts refactor: 0 and negatives answered 404 "Attachment
     # not found", anything past int4 a 500 from the driver. The bus contract
-    # now refuses the id before the database sees it, and the raw router maps
-    # the validation error to 400.
+    # first refused them (400 through the raw router); the thin router now
+    # holds the same line at its own edge and answers 422 before the bus.
     response = await auth_client.get(f"/attachments/{bad_id}")
-    assert response.status_code == 400
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("bad_task_id", [0, -1, 3_000_000_000])
+async def test_attachment_list_refuses_a_task_id_the_column_cannot_hold(auth_client, bad_task_id):
+    # Same history as the path ids, one level over: 0 answered 400 "Task ID
+    # is required", negatives an empty 200 (no task can have that id), and
+    # anything past int4 a 500 from the driver.
+    response = await auth_client.get("/attachments", params={"task_id": bad_task_id})
+    assert response.status_code == 422
 
 
 async def test_get_created_attachment_adds_a_download_url(auth_client, make_attachment):

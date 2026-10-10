@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from ..core.exceptions import (
+    AttachmentNotFoundError,
     BusProtocolError,
     BusTimeoutError,
     BusUnavailableError,
@@ -39,6 +40,7 @@ STATUS: dict[type[GatewayError], tuple[int, str]] = {
     TagNotFoundError: (404, "Tag not found"),
     TagNameTakenError: (409, "Tag with this name already exists"),
     CommentNotFoundError: (404, "Comment not found"),
+    AttachmentNotFoundError: (404, "Attachment not found"),
     InvalidCredentialsError: (401, "Invalid username or password"),
     BusUnavailableError: (503, "Service temporarily unavailable"),
     BusTimeoutError: (504, "Upstream service timeout"),

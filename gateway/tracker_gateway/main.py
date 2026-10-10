@@ -23,6 +23,7 @@ from .api.routers import (
     users,
     web,
 )
+from .broker.attachments_client import AttachmentsBusClient
 from .broker.comments_client import CommentsBusClient
 from .broker.tags_client import TagsBusClient
 from .broker.tasks_client import TasksBusClient
@@ -63,6 +64,7 @@ app.state.tasks_bus = TasksBusClient(None)
 app.state.users_bus = UsersBusClient(None)
 app.state.tags_bus = TagsBusClient(None)
 app.state.comments_bus = CommentsBusClient(None)
+app.state.attachments_bus = AttachmentsBusClient(None)
 app.state.cache = None
 app.state.events_hub = None
 
