@@ -64,15 +64,13 @@ class AttachmentsBusClient:
 
     async def get(self, attachment_id: int) -> AttachmentData:
         """Return one attachment with a presigned download URL, or raise AttachmentNotFoundError."""
-        return await self._call(
-            AttachmentCommand.GET, AttachmentGetByIdContract(id=attachment_id), AttachmentData, attachment_id=attachment_id
-        )
+        request = AttachmentGetByIdContract(id=attachment_id)
+        return await self._call(AttachmentCommand.GET, request, AttachmentData, attachment_id=attachment_id)
 
     async def delete(self, attachment_id: int) -> AttachmentDelete:
         """Delete an attachment, or raise AttachmentNotFoundError if it was not there."""
-        return await self._call(
-            AttachmentCommand.DELETE, AttachmentDeleteContract(id=attachment_id), AttachmentDelete, attachment_id=attachment_id
-        )
+        request = AttachmentDeleteContract(id=attachment_id)
+        return await self._call(AttachmentCommand.DELETE, request, AttachmentDelete, attachment_id=attachment_id)
 
     async def list_by_task(self, task_id: int) -> AttachmentList:
         """Return a task's attachments plus the count."""

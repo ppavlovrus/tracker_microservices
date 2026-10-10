@@ -83,7 +83,10 @@ class CommentNotFoundError(GatewayError):
 class AttachmentNotFoundError(GatewayError):
     def __init__(self, attachment_id: int | None = None) -> None:
         self.attachment_id = attachment_id
-        super().__init__(f"Attachment {attachment_id} not found" if attachment_id is not None else "Attachment not found")
+        if attachment_id is not None:
+            super().__init__(f"Attachment {attachment_id} not found")
+        else:
+            super().__init__("Attachment not found")
 
 
 class InvalidCredentialsError(GatewayError):

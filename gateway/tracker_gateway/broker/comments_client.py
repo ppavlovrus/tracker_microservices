@@ -67,7 +67,8 @@ class CommentsBusClient:
 
     async def get(self, comment_id: int) -> CommentData:
         """Return one comment, or raise CommentNotFoundError."""
-        return await self._call(CommentCommand.GET, CommentGetByIdContract(id=comment_id), CommentData, comment_id=comment_id)
+        request = CommentGetByIdContract(id=comment_id)
+        return await self._call(CommentCommand.GET, request, CommentData, comment_id=comment_id)
 
     async def update(self, comment_id: int, content: str) -> CommentData:
         """Replace the content and return the comment as stored.
@@ -81,7 +82,8 @@ class CommentsBusClient:
 
     async def delete(self, comment_id: int) -> CommentDelete:
         """Delete a comment, or raise CommentNotFoundError if it was not there."""
-        return await self._call(CommentCommand.DELETE, CommentDeleteContract(id=comment_id), CommentDelete, comment_id=comment_id)
+        request = CommentDeleteContract(id=comment_id)
+        return await self._call(CommentCommand.DELETE, request, CommentDelete, comment_id=comment_id)
 
     async def list_by_task(self, task_id: int) -> CommentList:
         """Return a task's whole comment thread plus its count."""
