@@ -29,6 +29,20 @@ class TagListContract(Contract):
     offset: int
 
 
+class CommentContract(Contract):
+    id: int
+    task_id: int
+    user_id: int
+    content: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class CommentListContract(Contract):
+    comments: list[CommentContract]
+    total: int
+
+
 class TaskContract(Contract):
     id: int
     title: str

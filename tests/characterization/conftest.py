@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from contracts import TagContract, TaskContract, UserContract
+from contracts import CommentContract, TagContract, TaskContract, UserContract
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
@@ -110,6 +110,31 @@ async def tag_trash(auth_client):
     yield ids
     for tag_id in ids:
         await auth_client.delete(f"/tags/{tag_id}")
+
+
+@pytest.fixture
+async def make_comment(auth_client, make_task):
+    """Create a comment (on its own task by default) and clean both up.
+
+    Returns ``(comment, task)``: several tests need the task to ask for the
+    comment list. A test that wants several comments on one task passes that
+    task in; ``make_task`` still owns its teardown either way.
+    """
+    comment_ids = []
+
+    async def _make(task=None, **overrides):
+        own_task = task if task is not None else await make_task()
+        payload = {"task_id": own_task.id, "user_id": 1, "content": "characterization probe"} | overrides
+        response = await auth_client.post("/comments", json=payload)
+        assert response.status_code == 201, f"setup failed: {response.text}"
+        comment = CommentContract.model_validate(response.json())
+        comment_ids.append(comment.id)
+        return comment, own_task
+
+    yield _make
+
+    for comment_id in comment_ids:
+        await auth_client.delete(f"/comments/{comment_id}")
 
 
 @pytest.fixture
