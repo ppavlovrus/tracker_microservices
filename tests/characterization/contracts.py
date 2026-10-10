@@ -43,6 +43,30 @@ class CommentListContract(Contract):
     total: int
 
 
+class AttachmentContract(Contract):
+    id: int
+    task_id: int
+    filename: str
+    content_type: str | None
+    storage_path: str
+    size_bytes: int | None
+    uploaded_at: datetime
+    # Present only in the GET-one answer; null in list entries.
+    download_url: str | None = None
+
+
+class AttachmentInitiateContract(AttachmentContract):
+    """The create answer: the metadata plus the presigned upload URL."""
+
+    upload_url: str
+    upload_expires_in: int
+
+
+class AttachmentListContract(Contract):
+    attachments: list[AttachmentContract]
+    total: int
+
+
 class TaskContract(Contract):
     id: int
     title: str

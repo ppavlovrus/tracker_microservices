@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from contracts import CommentContract, TagContract, TaskContract, UserContract
+from contracts import AttachmentInitiateContract, CommentContract, TagContract, TaskContract, UserContract
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
@@ -135,6 +135,39 @@ async def make_comment(auth_client, make_task):
 
     for comment_id in comment_ids:
         await auth_client.delete(f"/comments/{comment_id}")
+
+
+@pytest.fixture
+async def make_attachment(auth_client, make_task):
+    """Initiate an attachment (metadata + presigned URL, no bytes uploaded).
+
+    Returns ``(attachment, task)``. The S3 object is never uploaded, and the
+    teardown delete is fine with that: object-store deletes are idempotent
+    for keys that were never written.
+    """
+    attachment_ids = []
+
+    async def _make(task=None, **overrides):
+        own_task = task if task is not None else await make_task()
+        payload = {
+            "task_id": own_task.id,
+            "filename": "probe.txt",
+            "content_type": "text/plain",
+            "size_bytes": 42,
+        } | overrides
+        response = await auth_client.post("/attachments", json=payload)
+        assert response.status_code == 201, f"setup failed: {response.text}"
+        # The create answer is the initiate shape: metadata plus the
+        # presigned upload URL. It is a subclass, so a test that only wants
+        # the metadata still sees an attachment.
+        attachment = AttachmentInitiateContract.model_validate(response.json())
+        attachment_ids.append(attachment.id)
+        return attachment, own_task
+
+    yield _make
+
+    for attachment_id in attachment_ids:
+        await auth_client.delete(f"/attachments/{attachment_id}")
 
 
 @pytest.fixture
