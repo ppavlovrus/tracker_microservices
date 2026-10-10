@@ -4,9 +4,19 @@ import asyncio
 import logging
 import signal
 import sys
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import asyncpg
 from aio_pika import IncomingMessage
+from pydantic import BaseModel, ValidationError
+from task_tracker_common.contracts.commands import (
+    AttachmentCommand,
+    AttachmentCreationContract,
+    AttachmentDeleteContract,
+    AttachmentGetByIdContract,
+    AttachmentListByTaskContract,
+)
 from task_tracker_common.contracts.responses import ErrorCode, rpc_error
 from task_tracker_common.messaging import RabbitMQClient
 
@@ -42,8 +52,28 @@ logger = logging.getLogger(__name__)
 # Global instances
 db_pool: asyncpg.Pool = None
 rabbitmq_client: RabbitMQClient = None
-attachment_handlers: AttachmentHandlers = None
 shutdown_event = None
+
+# Command name -> (payload contract, handler). Filled in at startup, once the
+# handlers exist.
+Handler = Callable[[BaseModel], Awaitable[dict[str, Any]]]
+command_table: dict[str, tuple[type[BaseModel], Handler]] = {}
+
+
+def build_command_table(handlers: AttachmentHandlers) -> dict[str, tuple[type[BaseModel], Handler]]:
+    """Map every command this service answers to its payload contract.
+
+    A table rather than an if/elif ladder: adding a command means adding a row,
+    the enum keeps the names from drifting apart between the two sides of the
+    bus, and every payload passes through a contract before a handler sees it,
+    in one place instead of four.
+    """
+    return {
+        AttachmentCommand.CREATE: (AttachmentCreationContract, handlers.handle_create_attachment),
+        AttachmentCommand.GET: (AttachmentGetByIdContract, handlers.handle_get_attachment),
+        AttachmentCommand.DELETE: (AttachmentDeleteContract, handlers.handle_delete_attachment),
+        AttachmentCommand.LIST: (AttachmentListByTaskContract, handlers.handle_list_attachments_by_task),
+    }
 
 
 async def create_db_pool() -> asyncpg.Pool:
@@ -68,49 +98,46 @@ async def create_db_pool() -> asyncpg.Pool:
 
 
 async def handle_command(payload: dict, message: IncomingMessage) -> dict:
-    """
-    Handle incoming command from RabbitMQ.
+    """Validate an incoming command and route it to its handler.
 
-    Args:
-        payload: Command payload
-        message: RabbitMQ message
-
-    Returns:
-        Response dict
+    Three failures are told apart here, and each gets its own code, because the
+    caller has to react to them differently: a command this service does not
+    answer, a payload that does not satisfy the contract, and a handler that
+    blew up.
     """
     command = payload.get("command")
     data = payload.get("data", {})
 
+    entry = command_table.get(command)
+    if entry is None:
+        logger.warning(f"Unknown command: {command}")
+        return rpc_error(ErrorCode.VALIDATION_ERROR, f"Unknown command: {command}", "UnknownCommand")
+
+    contract, handler = entry
+
+    try:
+        request = contract.model_validate(data)
+    except ValidationError as e:
+        # The violations go to the log, not onto the bus: a payload that fails
+        # the contract is a bug in whoever sent it, and the field paths would
+        # otherwise ride all the way out to an HTTP client.
+        logger.warning(f"Rejected {command}: {e}")
+        return rpc_error(ErrorCode.VALIDATION_ERROR, f"{e.error_count()} contract violation(s)", "ValidationError")
+
     logger.debug(f"Handling command: {command}")
 
     try:
-        if command == "create_attachment":
-            return await attachment_handlers.handle_create_attachment(data)
-
-        elif command == "get_attachment":
-            return await attachment_handlers.handle_get_attachment(data)
-
-        elif command == "delete_attachment":
-            return await attachment_handlers.handle_delete_attachment(data)
-
-        elif command == "list_attachments_by_task":
-            return await attachment_handlers.handle_list_attachments_by_task(data)
-
-        else:
-            logger.warning(f"Unknown command: {command}")
-            return {"success": False, "error": f"Unknown command: {command}", "error_type": "UnknownCommand"}
-
+        return await handler(request)
     except Exception as e:
-        # str(e) stays in the log: an unclassified failure is often a driver
-        # message naming a table, a constraint and the offending value, and
-        # that is not something an HTTP client should be handed.
+        # str(e) rides the bus on purpose: the gateway decides what the client
+        # is told, and this half is for its log.
         logger.error(f"Error handling command {command}: {e}", exc_info=True)
-        return rpc_error(ErrorCode.INTERNAL, "Internal error", type(e).__name__)
+        return rpc_error(ErrorCode.INTERNAL, str(e), type(e).__name__)
 
 
 async def startup():
     """Initialize service components."""
-    global db_pool, rabbitmq_client, attachment_handlers
+    global db_pool, rabbitmq_client
 
     logger.info("=" * 60)
     logger.info(f"Starting {SERVICE_NAME}...")
@@ -120,7 +147,7 @@ async def startup():
         # Create database pool
         db_pool = await create_db_pool()
 
-        # Initialize S3 storage and ensure the bucket exists
+        # Initialize object storage and ensure the bucket exists
         storage = S3Storage(
             internal_endpoint=S3_ENDPOINT_INTERNAL,
             public_endpoint=S3_ENDPOINT_PUBLIC,
@@ -135,8 +162,9 @@ async def startup():
         # Initialize repository and handlers
         attachment_repository = AttachmentRepository(db_pool)
         attachment_handlers = AttachmentHandlers(attachment_repository, storage)
+        command_table.update(build_command_table(attachment_handlers))
 
-        logger.info("Repository and handlers initialized")
+        logger.info(f"Repository and handlers initialized ({len(command_table)} commands)")
 
         # Initialize RabbitMQ client
         rabbitmq_client = RabbitMQClient(amqp_url=AMQP_URL, service_name=SERVICE_NAME)

@@ -5,6 +5,7 @@ turns red during the refactor, the refactor changed behaviour -- decide whether
 that was intended before touching the assertion.
 """
 
+import pytest
 from contracts import AttachmentContract, AttachmentListContract
 
 
@@ -57,6 +58,16 @@ async def test_get_missing_attachment_returns_404(auth_client):
     response = await auth_client.get("/attachments/999999")
     assert response.status_code == 404
     assert response.json()["detail"] == "Attachment not found"
+
+
+@pytest.mark.parametrize("bad_id", [0, -1, 3_000_000_000])
+async def test_attachment_paths_refuse_an_id_the_column_cannot_hold(auth_client, bad_id):
+    # Before the contracts refactor: 0 and negatives answered 404 "Attachment
+    # not found", anything past int4 a 500 from the driver. The bus contract
+    # now refuses the id before the database sees it, and the raw router maps
+    # the validation error to 400.
+    response = await auth_client.get(f"/attachments/{bad_id}")
+    assert response.status_code == 400
 
 
 async def test_get_created_attachment_adds_a_download_url(auth_client, make_attachment):

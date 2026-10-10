@@ -14,6 +14,7 @@ from _pytest._code import ExceptionInfo
 from pydantic import ValidationError
 from task_tracker_common.contracts.base import INT4_MAX, INT8_MAX, MAX_FREE_TEXT
 from task_tracker_common.contracts.commands import (
+    AttachmentCreationContract,
     CommentCreationContract,
     TagCreationContract,
     TagGetByIdContract,
@@ -249,3 +250,14 @@ def test_comment_bus_contract_rejects_unusable_task_id(bad):
 def test_comment_bus_contract_caps_the_content():
     with pytest.raises(ValidationError):
         CommentCreationContract(task_id=1, user_id=1, content="x" * (MAX_FREE_TEXT + 1))
+
+
+@pytest.mark.parametrize("bad", [0, -7, INT4_MAX + 1])
+def test_attachment_bus_contract_rejects_unusable_task_id(bad):
+    with pytest.raises(ValidationError):
+        AttachmentCreationContract(task_id=bad, filename="f.txt")
+
+
+def test_attachment_bus_contract_rejects_a_size_the_column_cannot_hold():
+    with pytest.raises(ValidationError):
+        AttachmentCreationContract(task_id=1, filename="f.txt", size_bytes=INT8_MAX + 1)

@@ -108,6 +108,40 @@ class CommentList(Contract):
     comments: list[CommentData]
 
 
+class AttachmentData(Contract):
+    """An attachment's metadata. ``download_url`` is set only by ``get_attachment``."""
+
+    id: int
+    task_id: int
+    filename: str
+    content_type: str | None
+    storage_path: str
+    size_bytes: int | None
+    uploaded_at: datetime
+    download_url: str | None = None
+
+
+class AttachmentInitiate(AttachmentData):
+    """The ``create_attachment`` answer: metadata plus the presigned upload URL.
+
+    The bytes never travel the bus -- the client PUTs them straight to object
+    storage over this URL.
+    """
+
+    upload_url: str
+    upload_expires_in: int
+
+
+class AttachmentDelete(Contract):
+    id: int
+    deleted: Literal[True]
+
+
+class AttachmentList(Contract):
+    total: int
+    attachments: list[AttachmentData]
+
+
 class UserData(Contract):
     """A user as the rest of the platform is allowed to see one.
 

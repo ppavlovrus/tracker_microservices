@@ -86,22 +86,10 @@ def test_attachments_reports_a_missing_task():
 
 
 # -- an unclassified failure says nothing about the database ----------------
-
-
-@pytest.mark.parametrize(
-    "module",
-    [attachments],
-    ids=["attachments"],
-)
-def test_an_unclassified_failure_carries_no_driver_text(module):
-    """This one answers a router that puts ``error`` straight into the body."""
-    answer = module._internal(fk_violation("comment_task_id_fkey"))
-
-    assert answer["code"] == ErrorCode.INTERNAL
-    assert answer["error"] == "Internal error"
-    # Nothing the server said about its own schema travels with it.
-    for leaked in ("constraint", "violates", "DETAIL", "999999999", "comment_task_id_fkey"):
-        assert leaked not in str(answer), f"{leaked!r} reached the answer"
+#
+# The last ``_internal`` helper went with the attachments refactor: every
+# worker now answers through the shared dispatcher, whose INTERNAL envelope
+# stops at the gateway (see the stub test at the bottom of this file).
 
 
 def test_tags_reports_a_taken_name_as_a_conflict():
@@ -122,12 +110,12 @@ def test_tags_reports_a_taken_name_as_a_conflict():
 
 
 def test_the_typed_verticals_are_covered_by_the_status_table_instead():
-    """Tasks, users, tags and comments do send the driver text, and it stops at the gateway.
+    """Every worker's dispatcher sends the driver text, and it stops at the gateway.
 
-    Their dispatchers put ``str(exc)`` in the envelope on purpose -- it is the
+    The dispatchers put ``str(exc)`` in the envelope on purpose -- it is the
     operator's half of the story and belongs in the gateway's log. What the
     client is told comes from this table and never from the worker, which is
-    why those verticals need no ``_internal`` of their own.
+    why no vertical needs an ``_internal`` of its own.
     """
     assert STATUS[UpstreamFailureError] == (500, "Internal server error")
     assert STATUS[BusProtocolError] == (500, "Internal server error")

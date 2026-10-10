@@ -11,6 +11,12 @@ BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 # and must not go through the cascade SOCKS proxy -- with it enabled the whole run
 # dies at import time with "ImportError: socksio". Hence trust_env=False below.
 
+# The admin session, logged in once per run: (cookie name, cookie value).
+# The gateway rate-limits by IP (a 60-token bucket refilling at 10/s) and a
+# suite that logs in per test spends its whole budget on logins; the session
+# outlives the run by hours.
+_admin_session_cookie: tuple[str, str] | None = None
+
 
 @pytest.fixture
 async def client():
@@ -20,9 +26,16 @@ async def client():
 
 @pytest.fixture
 async def auth_client():
+    global _admin_session_cookie
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=10.0, trust_env=False) as client:
-        response = await client.post("/auth/login", json={"username": "admin", "password": "admin"})
-        assert response.status_code == 200, f"Login failed: {response.status_code} {response.text}"
+        if _admin_session_cookie is None:
+            response = await client.post("/auth/login", json={"username": "admin", "password": "admin"})
+            assert response.status_code == 200, f"Login failed: {response.status_code} {response.text}"
+            # One cookie comes back; take its name from the answer instead of
+            # hardcoding the gateway's choice here.
+            session_cookie = next(iter(response.cookies.jar))
+            _admin_session_cookie = (session_cookie.name, session_cookie.value)
+        client.cookies.set(*_admin_session_cookie)
         yield client
 
 
