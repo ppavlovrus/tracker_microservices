@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from task_tracker_common.observability import setup_telemetry, shutdown_telemetry
 
-from .api.routers import auth, chat, oauth, sse
+from .api.routers import auth, chat, sse
 from .broker import bus
 from .broker import chat as chat_broker
 from .broker import events as events_broker
@@ -83,10 +83,6 @@ def wire_routers() -> None:
     in one function, rather than spread through the startup sequence.
     """
     auth.set_session_store(sessions.session_store)
-
-    if sessions.oauth_state_store is not None:
-        oauth.set_session_store(sessions.session_store)
-        oauth.set_state_store(sessions.oauth_state_store)
 
     if chat_broker.hub is not None:
         chat.set_chat_hub(chat_broker.hub)

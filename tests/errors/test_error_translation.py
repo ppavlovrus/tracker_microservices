@@ -23,6 +23,7 @@ from tracker_gateway.broker.tasks_client import MISSING_REFERENCE
 from tracker_gateway.core.exceptions import (
     BusProtocolError,
     CreatorNotFoundError,
+    SessionStoreUnavailableError,
     StatusNotFoundError,
     UpstreamFailureError,
 )
@@ -119,6 +120,16 @@ def test_the_typed_verticals_are_covered_by_the_status_table_instead():
     """
     assert STATUS[UpstreamFailureError] == (500, "Internal server error")
     assert STATUS[BusProtocolError] == (500, "Internal server error")
+
+
+def test_a_login_without_its_session_backend_refuses_to_start():
+    """No store -> no CSRF state, no session: one 503 wording for both causes.
+
+    The old router answered two wordings here ("Service temporarily
+    unavailable" for a missing store, "Session backend unavailable" for a
+    down Redis); the service owns the flow now and refuses it one way.
+    """
+    assert STATUS[SessionStoreUnavailableError] == (503, "Session backend unavailable")
 
 
 # -- and the gateway turns the codes into the statuses they deserve ---------

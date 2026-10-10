@@ -14,9 +14,11 @@ from task_tracker_common.messaging import RabbitMQClient
 from ..core.exceptions import BusUnavailableError
 from ..service.attachments import AttachmentService
 from ..service.comments import CommentService
+from ..service.oauth import OAuthService
 from ..service.tags import TagService
 from ..service.tasks import TaskService
 from ..service.users import UserService
+from ..storage import sessions
 
 
 def get_tasks_service(request: Request) -> TaskService:
@@ -50,6 +52,19 @@ def get_attachments_service(request: Request) -> AttachmentService:
     return AttachmentService(bus=request.app.state.attachments_bus)
 
 
+def get_oauth_service(request: Request) -> OAuthService:
+    """Assemble the OAuth service for one request.
+
+    The stores may be None when their feature is off; the service refuses the
+    flow then, which is a 503 rather than a half-working login.
+    """
+    return OAuthService(
+        state_store=sessions.oauth_state_store,
+        session_store=sessions.session_store,
+        users=UserService(bus=request.app.state.users_bus),
+    )
+
+
 def get_rabbitmq(request: Request) -> RabbitMQClient:
     """The raw bus client, for the calls that have no contracts yet.
 
@@ -67,4 +82,5 @@ UsersServiceDep = Annotated[UserService, Depends(get_users_service)]
 TagsServiceDep = Annotated[TagService, Depends(get_tags_service)]
 CommentsServiceDep = Annotated[CommentService, Depends(get_comments_service)]
 AttachmentsServiceDep = Annotated[AttachmentService, Depends(get_attachments_service)]
+OAuthServiceDep = Annotated[OAuthService, Depends(get_oauth_service)]
 RabbitMQDep = Annotated[RabbitMQClient, Depends(get_rabbitmq)]

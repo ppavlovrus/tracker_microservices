@@ -98,6 +98,13 @@ class InvalidCredentialsError(GatewayError):
         super().__init__("Invalid username or password")
 
 
+class SessionStoreUnavailableError(GatewayError):
+    """The session backend is missing or down; a login flow cannot proceed."""
+
+    def __init__(self) -> None:
+        super().__init__("Session backend unavailable")
+
+
 class UpstreamFailureError(GatewayError):
     def __init__(self, command: str) -> None:
         self.command = command
