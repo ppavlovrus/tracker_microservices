@@ -2,18 +2,18 @@
 
 Every endpoint here does the same three things and nothing else: turn the
 request into a bus contract, hand it to the service, and shape the answer for
-HTTP. No try/except, no HTTPException on the task paths, no cache, no events --
-those moved to ``service/tasks.py``, which has no idea HTTP exists.
+HTTP. No try/except on the task paths, no cache, no events -- those moved to
+``service/tasks.py``, which has no idea HTTP exists.
 """
 
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Path, Query
 from task_tracker_common.contracts.base import INT4_MAX
-from task_tracker_common.contracts.commands import TaskCreationContract, TaskUpdatePayloadContract
+from task_tracker_common.contracts.commands import TagCreationContract, TaskCreationContract, TaskUpdatePayloadContract
 
-from ...core.config import RPC_TIMEOUT
-from ..deps import RabbitMQDep, TasksServiceDep
+from ...core.exceptions import TagNotFoundError
+from ..deps import TagsServiceDep, TasksServiceDep
 from ..schemas.task import (
     TaskCreate,
     TaskListResponse,
@@ -23,10 +23,6 @@ from ..schemas.task import (
     TaskTagAdd,
     TaskUpdate,
 )
-
-# Queue of the tags service, used when resolving a tag by name. Still spoken to
-# raw: the tags vertical has not moved onto contracts yet.
-TAGS_QUEUE = "tags.commands"
 
 # Path ids are bounded to the width of the column they address. The bound is not
 # decoration: the payload contracts require a positive int4, and a contract that
@@ -101,44 +97,18 @@ async def delete_task(task_id: TaskId, service: TasksServiceDep) -> None:
     await service.delete(task_id)
 
 
-async def _find_tag_id(rabbitmq_client, name: str) -> int | None:
-    """Return the id of the tag named ``name``, or None if there is no such tag.
-
-    Still raw RPC: this talks to the tags service, which has no contracts yet.
-    It moves when that vertical does.
-    """
-    answer = await rabbitmq_client.call(
-        queue_name=TAGS_QUEUE,
-        message={"command": "get_tag_by_name", "data": {"name": name}},
-        timeout=RPC_TIMEOUT,
-    )
-    return answer["data"]["id"] if answer.get("success") else None
-
-
-async def _create_tag(rabbitmq_client, name: str) -> int:
-    """Create a tag named ``name`` and return its id."""
-    created = await rabbitmq_client.call(
-        queue_name=TAGS_QUEUE,
-        message={"command": "create_tag", "data": {"name": name}},
-        timeout=RPC_TIMEOUT,
-    )
-    if not created.get("success"):
-        raise HTTPException(status_code=400, detail=created.get("error", "Failed to create tag"))
-    return created["data"]["id"]
-
-
 @router.post("/{task_id}/tags", response_model=list[TaskTag])
 async def add_task_tag(
-    task_id: TaskId, payload: TaskTagAdd, service: TasksServiceDep, rabbitmq: RabbitMQDep
+    task_id: TaskId, payload: TaskTagAdd, service: TasksServiceDep, tags: TagsServiceDep
 ) -> list[TaskTag]:
     """Attach a tag (by name, created on demand) to a task."""
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="Tag name must not be blank")
 
-    tag_id = await _find_tag_id(rabbitmq, name)
-
-    if tag_id is None:
+    try:
+        tag = await tags.get_by_name(name)
+    except TagNotFoundError:
         # Creating the tag is a write to a second service, and this endpoint
         # has no way to undo it. Do not make that write until the task is known
         # to exist, or tagging a task that is gone leaves behind a tag nothing
@@ -149,13 +119,13 @@ async def add_task_tag(
         # properly needs the two writes behind one command, which is work for
         # the tags vertical.
         await service.get(task_id)
-        tag_id = await _create_tag(rabbitmq, name)
+        tag = await tags.create(TagCreationContract(name=name))
 
     # A missing task arrives as TaskNotFoundError and becomes a 404 in one
     # place. This used to be decided by searching the worker's error text for
     # the words "not found".
-    tags = await service.add_tag(task_id, tag_id)
-    return [TaskTag(**tag.model_dump()) for tag in tags]
+    linked = await service.add_tag(task_id, tag.id)
+    return [TaskTag(**tag.model_dump()) for tag in linked]
 
 
 @router.delete("/{task_id}/tags/{tag_id}", response_model=list[TaskTag])

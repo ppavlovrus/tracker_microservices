@@ -23,6 +23,7 @@ from .api.routers import (
     users,
     web,
 )
+from .broker.tags_client import TagsBusClient
 from .broker.tasks_client import TasksBusClient
 from .broker.users_client import UsersBusClient
 from .core.config import HOST, LOG_LEVEL, METRICS_ENABLED, PORT, SERVICE_NAME
@@ -59,6 +60,7 @@ register_error_handlers(app)
 app.state.rabbitmq = None
 app.state.tasks_bus = TasksBusClient(None)
 app.state.users_bus = UsersBusClient(None)
+app.state.tags_bus = TagsBusClient(None)
 app.state.cache = None
 app.state.events_hub = None
 

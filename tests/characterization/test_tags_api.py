@@ -119,6 +119,25 @@ async def test_a_tag_created_after_a_warm_list_read_shows_up_in_the_next_read(au
     assert tag.id in {t.id for t in body.tags}
 
 
+async def test_an_on_demand_tag_invalidates_a_warm_list_read_too(auth_client, make_task, tag_trash):
+    # The second entry point that writes tags is POST /tasks/{id}/tags. It
+    # used to create tags with raw RPC, which skipped the cache drop; going
+    # through the tags service is what makes a warm list page see the tag.
+    warm = await auth_client.get("/tags", params={"limit": 100, "offset": 0})
+    assert warm.status_code == 200
+
+    task = await make_task()
+    name = f"via tasks {uuid4().hex[:8]}"
+    attached = await auth_client.post(f"/tasks/{task.id}/tags", json={"name": name})
+    assert attached.status_code == 200
+    tag_trash.append(attached.json()[0]["id"])
+
+    reread = await auth_client.get("/tags", params={"limit": 100, "offset": 0})
+    assert reread.status_code == 200
+    body = TagListContract.model_validate(reread.json())
+    assert name in {t.name for t in body.tags}
+
+
 async def test_update_tag_renames_it(auth_client, make_tag):
     tag = await make_tag()
     new_name = f"renamed {uuid4().hex[:8]}"
@@ -159,11 +178,11 @@ async def test_delete_missing_tag_returns_404(auth_client):
 async def test_tag_paths_refuse_an_id_the_column_cannot_hold(auth_client, bad_id):
     # Before the contracts refactor these were three different accidents:
     # 0 answered 404 "Tag ID is required", negatives 404 "Tag not found",
-    # and anything past int4 a 500 from the driver. The bus contract now
-    # refuses the id before the database sees it, and the raw router maps
-    # the validation error to 400.
+    # and anything past int4 a 500 from the driver. The bus contract first
+    # refused them (400 through the raw router); the thin router now holds
+    # the same line at its own edge and answers 422 before the bus.
     response = await auth_client.get(f"/tags/{bad_id}")
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 async def test_renaming_a_tag_to_its_own_name_succeeds(auth_client, make_tag):
@@ -180,10 +199,10 @@ async def test_renaming_a_tag_to_its_own_name_succeeds(auth_client, make_tag):
 
 
 # --- tags through the tasks API ------------------------------------------------
-# These pin the flow the tasks router implements with raw RPC into the tags
-# queue today (routers/tasks.py resolves a tag by name and creates it on
-# demand). The characterization matters because that debt moves when the
-# tags vertical does.
+# These pin the flow the tasks router implements: it resolves a tag by name
+# and creates it on demand. That flow used to be raw RPC into the tags queue;
+# since the tags vertical moved onto contracts it goes through TagService,
+# and these tests are what says the port kept the behaviour.
 
 
 async def test_task_tag_creates_the_tag_on_demand_and_reuses_it(auth_client, make_task, tag_trash):

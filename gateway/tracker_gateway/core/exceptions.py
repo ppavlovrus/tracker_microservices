@@ -63,6 +63,17 @@ class UsernameTakenError(GatewayError):
         super().__init__("Username already exists")
 
 
+class TagNotFoundError(GatewayError):
+    def __init__(self, tag_id: int | None = None) -> None:
+        self.tag_id = tag_id
+        super().__init__(f"Tag {tag_id} not found" if tag_id is not None else "Tag not found")
+
+
+class TagNameTakenError(GatewayError):
+    def __init__(self) -> None:
+        super().__init__("Tag with this name already exists")
+
+
 class InvalidCredentialsError(GatewayError):
     """A login that must not say why it failed.
 
