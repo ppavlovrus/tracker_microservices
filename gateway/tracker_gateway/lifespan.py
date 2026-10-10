@@ -15,6 +15,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from task_tracker_common.observability import setup_telemetry, shutdown_telemetry
 
 from .api.routers import attachments, auth, chat, comments, oauth, sse, tags
 from .broker import bus
@@ -22,6 +23,7 @@ from .broker import chat as chat_broker
 from .broker import events as events_broker
 from .broker.tasks_client import TasksBusClient
 from .broker.users_client import UsersBusClient
+from .core.config import OTEL_SERVICE_NAME
 from .middleware.ratelimit import close_rate_limiter, init_rate_limiter
 from .storage import cache as cache_storage
 from .storage import sessions
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 async def startup(app: FastAPI) -> None:
     """Open every collaborator, then hand them to the routers."""
+    setup_telemetry(OTEL_SERVICE_NAME)
     rabbitmq = await bus.init_bus()
     app.state.rabbitmq = rabbitmq
     app.state.tasks_bus = TasksBusClient(rabbitmq)
@@ -48,13 +51,19 @@ async def startup(app: FastAPI) -> None:
 
 async def shutdown() -> None:
     """Close the collaborators in the order the previous lifespan used."""
-    await bus.close_bus()
-    await cache_storage.close_cache()
-    await close_rate_limiter()
-    await sessions.close_sessions()
-    await sessions.close_oauth_state()
-    await chat_broker.close_chat()
-    await events_broker.close_events()
+    try:
+        await bus.close_bus()
+        await cache_storage.close_cache()
+        await close_rate_limiter()
+        await sessions.close_sessions()
+        await sessions.close_oauth_state()
+        await chat_broker.close_chat()
+        await events_broker.close_events()
+    finally:
+        # Last, after every client that could still produce a span is gone --
+        # and even when one of the closes above failed, because those are
+        # exactly the runs whose buffered spans nobody gets a second look at.
+        shutdown_telemetry()
 
 
 def wire_routers() -> None:

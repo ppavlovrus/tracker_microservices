@@ -10,9 +10,12 @@ DATABASE_PORT: int = int(os.getenv("DATABASE_PORT", 5432))
 DATABASE_NAME: str = os.getenv("DATABASE_NAME", "task_tracker")
 DATABASE_URL: str = os.getenv(
     "DATABASE_URL",
-    f"postgresql://{DATABASE_USERNAME}:{DATABASE_PASSWORD}@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}",
+    # The driver is spelled out on purpose: SQLAlchemy 2.1 resolves a bare
+    # postgresql:// URL to psycopg 3 first, and this extra installs
+    # psycopg2. Leaving the choice to the resolver made migrations depend
+    # on which SQLAlchemy a rebuild happened to pick up.
+    f"postgresql+psycopg2://{DATABASE_USERNAME}:{DATABASE_PASSWORD}@{DATABASE_HOST}:{DATABASE_PORT}/{DATABASE_NAME}",
 )
-print(DATABASE_URL)
 
 DB_POOL_MIN_SIZE: int = 1
 DB_POOL_MAX_SIZE: int = 10

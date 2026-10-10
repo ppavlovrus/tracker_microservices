@@ -39,6 +39,7 @@ services:
       - DB_NAME=task_tracker
       - DB_HOST=postgres
       - AMQP_URL=amqp://guest:guest@rabbitmq/
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
     depends_on:
       postgres:
         condition: service_healthy
@@ -170,6 +171,7 @@ services:
       - AMQP_URL=amqp://guest:guest@rabbitmq/
       - REDIS_URL=redis://redis:6379/0
       - METRICS_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
       # Yandex OAuth credentials come from the root .env (never committed)
       - YANDEX_CLIENT_ID=${YANDEX_CLIENT_ID:-}
       - YANDEX_CLIENT_SECRET=${YANDEX_CLIENT_SECRET:-}
@@ -188,6 +190,19 @@ services:
         condition: service_healthy
       tasks:
         condition: service_started
+
+  # Trace storage and UI. Pinned to the same image the mentor's template
+  # uses. All-in-one keeps collector, storage and UI in one process with
+  # in-memory storage: fine for a stand, traces do not survive a restart.
+  jaeger:
+    restart: unless-stopped
+    image: jaegertracing/all-in-one:1.58
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC (the template's exporter)
+      - "4318:4318"    # OTLP HTTP (ours)
 
   prometheus:
     restart: unless-stopped

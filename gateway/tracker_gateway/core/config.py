@@ -8,6 +8,10 @@ RPC_TIMEOUT: float = float(os.getenv("RPC_TIMEOUT", "30.0"))
 
 # Gateway settings
 SERVICE_NAME: str = "gateway"
+# Distinct from SERVICE_NAME: that one names the process for the bus, this
+# one names it in traces, where tracker-* prefixes group the services in
+# Jaeger's service list.
+OTEL_SERVICE_NAME: str = "tracker-gateway"
 HOST: str = os.getenv("HOST", "0.0.0.0")
 PORT: int = int(os.getenv("PORT", "8000"))
 

@@ -30,12 +30,18 @@ from .core.metrics import build_instrumentator
 from .lifespan import lifespan
 from .middleware.auth import AuthMiddleware
 from .middleware.ratelimit import RateLimitMiddleware
+from .middleware.tracing import TracingMiddleware
 
 # Setup logging
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Create FastAPI application
+# Create FastAPI application. The request span is hand-rolled in
+# middleware/tracing.py: it carries exactly the four facts we show in demos
+# and continues the caller's trace from the incoming traceparent header.
+# Nothing in the dependency set installs a tracer provider implicitly, so
+# the one pipeline observability.py sets up in the lifespan is the whole
+# story.
 app = FastAPI(
     title="Task Tracker Gateway",
     description="API Gateway for Task Tracker microservices",
@@ -56,10 +62,13 @@ app.state.users_bus = UsersBusClient(None)
 app.state.cache = None
 app.state.events_hub = None
 
-# Middleware. Starlette runs the last one added first, so the limiter sits
-# inside the auth check -- the order the decorator-based version produced.
+# Middleware. Starlette runs the last one added first, so the stack from the
+# outside in is: metrics (added last, further below), tracing, auth, rate
+# limiting -- a span covers even the 401s auth produces, and metrics times
+# the whole thing.
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(AuthMiddleware)
+app.add_middleware(TracingMiddleware)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
