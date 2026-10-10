@@ -196,3 +196,36 @@ class TagDeleteContract(Contract):
 class TagListContract(Contract):
     limit: int = Field(..., ge=1, le=100)
     offset: int = Field(..., ge=0)
+
+
+# -- comments ----------------------------------------------------------------
+#
+# A comment update is a content replacement, not a partial edit: ``content``
+# is required in the update payload.
+
+
+class CommentCreationContract(Contract):
+    task_id: RowId
+    user_id: RowId
+    content: FreeText
+
+
+class CommentUpdatePayloadContract(Contract):
+    content: FreeText
+
+
+class CommentUpdateContract(Contract):
+    id: RowId
+    update: CommentUpdatePayloadContract
+
+
+class CommentGetByIdContract(Contract):
+    id: RowId
+
+
+class CommentDeleteContract(Contract):
+    id: RowId
+
+
+class CommentListByTaskContract(Contract):
+    task_id: RowId

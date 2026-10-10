@@ -87,6 +87,27 @@ class TagList(Contract):
     tags: list[TagData]
 
 
+class CommentData(Contract):
+    id: int
+    task_id: int
+    user_id: int
+    content: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class CommentDelete(Contract):
+    id: int
+    deleted: Literal[True]
+
+
+class CommentList(Contract):
+    """Payload of ``list_comments_by_task``: a task's whole thread."""
+
+    total: int
+    comments: list[CommentData]
+
+
 class UserData(Contract):
     """A user as the rest of the platform is allowed to see one.
 

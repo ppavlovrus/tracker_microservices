@@ -14,6 +14,7 @@ from _pytest._code import ExceptionInfo
 from pydantic import ValidationError
 from task_tracker_common.contracts.base import INT4_MAX, INT8_MAX, MAX_FREE_TEXT
 from task_tracker_common.contracts.commands import (
+    CommentCreationContract,
     TagCreationContract,
     TagGetByIdContract,
     TagListContract,
@@ -237,3 +238,14 @@ def test_tag_bus_contract_rejects_unusable_id(bad):
 def test_tag_bus_list_contract_bounds_the_page(page):
     with pytest.raises(ValidationError):
         TagListContract(**page)
+
+
+@pytest.mark.parametrize("bad", [0, -7, INT4_MAX + 1])
+def test_comment_bus_contract_rejects_unusable_task_id(bad):
+    with pytest.raises(ValidationError):
+        CommentCreationContract(task_id=bad, user_id=1, content="x")
+
+
+def test_comment_bus_contract_caps_the_content():
+    with pytest.raises(ValidationError):
+        CommentCreationContract(task_id=1, user_id=1, content="x" * (MAX_FREE_TEXT + 1))

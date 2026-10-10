@@ -90,11 +90,11 @@ def test_attachments_reports_a_missing_task():
 
 @pytest.mark.parametrize(
     "module",
-    [comments, attachments],
-    ids=["comments", "attachments"],
+    [attachments],
+    ids=["attachments"],
 )
 def test_an_unclassified_failure_carries_no_driver_text(module):
-    """These two answer routers that put ``error`` straight into the body."""
+    """This one answers a router that puts ``error`` straight into the body."""
     answer = module._internal(fk_violation("comment_task_id_fkey"))
 
     assert answer["code"] == ErrorCode.INTERNAL
@@ -122,7 +122,7 @@ def test_tags_reports_a_taken_name_as_a_conflict():
 
 
 def test_the_typed_verticals_are_covered_by_the_status_table_instead():
-    """Tasks, users and tags do send the driver text, and it stops at the gateway.
+    """Tasks, users, tags and comments do send the driver text, and it stops at the gateway.
 
     Their dispatchers put ``str(exc)`` in the envelope on purpose -- it is the
     operator's half of the story and belongs in the gateway's log. What the

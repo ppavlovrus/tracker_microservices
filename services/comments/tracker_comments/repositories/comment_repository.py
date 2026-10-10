@@ -1,4 +1,4 @@
-"""Comment repository for database operations."""
+"""Comment repository: every SQL statement the comments worker runs."""
 
 import logging
 from datetime import datetime
@@ -8,149 +8,79 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
+_COLUMNS = "id, task_id, user_id, content, created_at, updated_at"
+
 
 class CommentRepository:
     """Repository for Comment entity operations."""
 
     def __init__(self, pool: asyncpg.Pool):
-        """
-        Initialize CommentRepository.
-
-        Args:
-            pool: asyncpg connection pool
-        """
+        """Initialize with the pool every query acquires from."""
         self.pool = pool
 
     async def get_by_id(self, comment_id: int) -> dict[str, Any] | None:
-        """
-        Get comment by ID.
-
-        Args:
-            comment_id: Comment ID
-
-        Returns:
-            Comment data as dict or None if not found
-        """
+        """One comment row by id, or None."""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                """
-                SELECT id, task_id, user_id, content, 
-                       created_at, updated_at
+                f"""
+                SELECT {_COLUMNS}
                 FROM comment
                 WHERE id = $1
                 """,
                 comment_id,
             )
-            if row:
-                logger.debug(f"Comment found: ID={comment_id}")
-                return dict(row)
-
-            logger.warning(f"Comment not found: ID={comment_id}")
-            return None
+            return dict(row) if row else None
 
     async def create(self, data: dict[str, Any]) -> dict[str, Any]:
-        """
-        Create new comment.
-
-        Args:
-            data: Comment data (task_id, user_id, content)
-
-        Returns:
-            Created comment data
-        """
+        """Insert a comment; the foreign keys are the only judge of its references."""
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                """
+                f"""
                 INSERT INTO comment (task_id, user_id, content)
                 VALUES ($1, $2, $3)
-                RETURNING id, task_id, user_id, content, 
-                          created_at, updated_at
+                RETURNING {_COLUMNS}
                 """,
-                data.get("task_id"),
-                data.get("user_id"),
-                data.get("content"),
+                data["task_id"],
+                data["user_id"],
+                data["content"],
             )
-
             logger.info(f"Comment created: ID={row['id']} for task_id={row['task_id']}")
             return dict(row)
 
     async def update(self, comment_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
+        """Replace the content and touch ``updated_at``, or None if there is no such row.
+
+        ``updated_at`` is written here rather than left to the column default:
+        a server default fires on INSERT, and Postgres has no ON UPDATE -- the
+        same reason the tasks repository writes it explicitly.
         """
-        Update comment by ID.
-
-        Args:
-            comment_id: Comment ID
-            data: Fields to update (content)
-
-        Returns:
-            Updated comment data or None if not found
-        """
-        # For comments we typically only update content
-        content = data.get("content")
-
-        if not content:
-            # No content to update, just return current comment
-            return await self.get_by_id(comment_id)
-
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
-                """
+                f"""
                 UPDATE comment
                 SET content = $1, updated_at = $2
                 WHERE id = $3
-                RETURNING id, task_id, user_id, content, 
-                          created_at, updated_at
+                RETURNING {_COLUMNS}
                 """,
-                content,
+                data["content"],
                 datetime.utcnow(),
                 comment_id,
             )
-
-            if row:
-                logger.info(f"Comment updated: ID={comment_id}")
-                return dict(row)
-
-            logger.warning(f"Comment not found for update: ID={comment_id}")
-            return None
+            return dict(row) if row else None
 
     async def delete(self, comment_id: int) -> bool:
-        """
-        Delete comment by ID.
-
-        Args:
-            comment_id: Comment ID
-
-        Returns:
-            True if deleted, False if not found
-        """
+        """Delete a comment; False when the row was not there to delete."""
         async with self.pool.acquire() as conn:
             result = await conn.execute("DELETE FROM comment WHERE id = $1", comment_id)
-
-            # result is like "DELETE 1" or "DELETE 0"
-            deleted = result.split()[-1] == "1"
-
-            if deleted:
-                logger.info(f"Comment deleted: ID={comment_id}")
-            else:
-                logger.warning(f"Comment not found for deletion: ID={comment_id}")
-
-            return deleted
+            # The driver answers "DELETE 1" or "DELETE 0".
+            return result.split()[-1] == "1"
 
     async def get_by_task_id(self, task_id: int) -> list[dict[str, Any]]:
-        """
-        Get all comments for a specific task.
-
-        Args:
-            task_id: Task ID
-
-        Returns:
-            List of comments
-        """
+        """Every comment of one task, oldest first."""
         async with self.pool.acquire() as conn:
             rows = await conn.fetch(
-                """
-                SELECT id, task_id, user_id, content, 
-                       created_at, updated_at
+                f"""
+                SELECT {_COLUMNS}
                 FROM comment
                 WHERE task_id = $1
                 ORDER BY created_at ASC
@@ -160,15 +90,6 @@ class CommentRepository:
             return [dict(row) for row in rows]
 
     async def count_by_task_id(self, task_id: int) -> int:
-        """
-        Count comments for a specific task.
-
-        Args:
-            task_id: Task ID
-
-        Returns:
-            Total count
-        """
+        """Number of comments on one task."""
         async with self.pool.acquire() as conn:
-            count = await conn.fetchval("SELECT COUNT(*) FROM comment WHERE task_id = $1", task_id)
-            return count or 0
+            return await conn.fetchval("SELECT COUNT(*) FROM comment WHERE task_id = $1", task_id) or 0

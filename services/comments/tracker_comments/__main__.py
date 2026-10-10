@@ -5,9 +5,19 @@ import logging
 import signal
 import sys
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 import asyncpg
 from aio_pika import IncomingMessage
+from pydantic import BaseModel, ValidationError
+from task_tracker_common.contracts.commands import (
+    CommentCommand,
+    CommentCreationContract,
+    CommentDeleteContract,
+    CommentGetByIdContract,
+    CommentListByTaskContract,
+    CommentUpdateContract,
+)
 from task_tracker_common.contracts.responses import ErrorCode, rpc_error
 from task_tracker_common.messaging import RabbitMQClient
 
@@ -32,17 +42,32 @@ from .repositories import CommentRepository
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# One command handler: takes the command payload, answers with a response dict.
-CommandHandler = Callable[[dict], Awaitable[dict]]
-
 # Global instances
 db_pool: asyncpg.Pool = None
 rabbitmq_client: RabbitMQClient = None
-comment_handlers: CommentHandlers = None
 shutdown_event = None
 
-# Command name -> handler, filled by startup() once the handlers exist.
-dispatch: dict[str, CommandHandler] = {}
+# Command name -> (payload contract, handler). Filled in at startup, once the
+# handlers exist.
+Handler = Callable[[BaseModel], Awaitable[dict[str, Any]]]
+command_table: dict[str, tuple[type[BaseModel], Handler]] = {}
+
+
+def build_command_table(handlers: CommentHandlers) -> dict[str, tuple[type[BaseModel], Handler]]:
+    """Map every command this service answers to its payload contract.
+
+    A table rather than an if/elif ladder: adding a command means adding a row,
+    the enum keeps the names from drifting apart between the two sides of the
+    bus, and every payload passes through a contract before a handler sees it,
+    in one place instead of five.
+    """
+    return {
+        CommentCommand.CREATE: (CommentCreationContract, handlers.handle_create_comment),
+        CommentCommand.GET: (CommentGetByIdContract, handlers.handle_get_comment),
+        CommentCommand.UPDATE: (CommentUpdateContract, handlers.handle_update_comment),
+        CommentCommand.DELETE: (CommentDeleteContract, handlers.handle_delete_comment),
+        CommentCommand.LIST: (CommentListByTaskContract, handlers.handle_list_comments_by_task),
+    }
 
 
 async def create_db_pool() -> asyncpg.Pool:
@@ -66,56 +91,47 @@ async def create_db_pool() -> asyncpg.Pool:
     return pool
 
 
-def build_dispatch(handlers: CommentHandlers) -> dict[str, CommandHandler]:
-    """Map every command name on the wire to the coroutine that answers it.
-
-    A table rather than an if/elif ladder: a new command is one line, and the
-    dispatcher below stays flat no matter how many there are. Built once at
-    startup, when the handlers exist.
-    """
-    return {
-        "create_comment": handlers.handle_create_comment,
-        "get_comment": handlers.handle_get_comment,
-        "update_comment": handlers.handle_update_comment,
-        "delete_comment": handlers.handle_delete_comment,
-        "list_comments_by_task": handlers.handle_list_comments_by_task,
-    }
-
-
 async def handle_command(payload: dict, message: IncomingMessage) -> dict:
-    """
-    Handle incoming command from RabbitMQ.
+    """Validate an incoming command and route it to its handler.
 
-    Args:
-        payload: Command payload
-        message: RabbitMQ message
-
-    Returns:
-        Response dict
+    Three failures are told apart here, and each gets its own code, because the
+    caller has to react to them differently: a command this service does not
+    answer, a payload that does not satisfy the contract, and a handler that
+    blew up.
     """
     command = payload.get("command")
     data = payload.get("data", {})
 
-    logger.debug(f"Handling command: {command}")
-
-    handler = dispatch.get(command)
-    if handler is None:
+    entry = command_table.get(command)
+    if entry is None:
         logger.warning(f"Unknown command: {command}")
-        return {"success": False, "error": f"Unknown command: {command}", "error_type": "UnknownCommand"}
+        return rpc_error(ErrorCode.VALIDATION_ERROR, f"Unknown command: {command}", "UnknownCommand")
+
+    contract, handler = entry
 
     try:
-        return await handler(data)
+        request = contract.model_validate(data)
+    except ValidationError as e:
+        # The violations go to the log, not onto the bus: a payload that fails
+        # the contract is a bug in whoever sent it, and the field paths would
+        # otherwise ride all the way out to an HTTP client.
+        logger.warning(f"Rejected {command}: {e}")
+        return rpc_error(ErrorCode.VALIDATION_ERROR, f"{e.error_count()} contract violation(s)", "ValidationError")
+
+    logger.debug(f"Handling command: {command}")
+
+    try:
+        return await handler(request)
     except Exception as e:
-        # str(e) stays in the log: an unclassified failure is often a driver
-        # message naming a table, a constraint and the offending value, and
-        # that is not something an HTTP client should be handed.
+        # str(e) rides the bus on purpose: the gateway decides what the client
+        # is told, and this half is for its log.
         logger.error(f"Error handling command {command}: {e}", exc_info=True)
-        return rpc_error(ErrorCode.INTERNAL, "Internal error", type(e).__name__)
+        return rpc_error(ErrorCode.INTERNAL, str(e), type(e).__name__)
 
 
 async def startup():
     """Initialize service components."""
-    global db_pool, rabbitmq_client, comment_handlers, dispatch
+    global db_pool, rabbitmq_client
 
     logger.info("=" * 60)
     logger.info(f"Starting {SERVICE_NAME}...")
@@ -128,9 +144,9 @@ async def startup():
         # Initialize repository and handlers
         comment_repository = CommentRepository(db_pool)
         comment_handlers = CommentHandlers(comment_repository)
-        dispatch = build_dispatch(comment_handlers)
+        command_table.update(build_command_table(comment_handlers))
 
-        logger.info("Repository and handlers initialized")
+        logger.info(f"Repository and handlers initialized ({len(command_table)} commands)")
 
         # Initialize RabbitMQ client
         rabbitmq_client = RabbitMQClient(amqp_url=AMQP_URL, service_name=SERVICE_NAME)
