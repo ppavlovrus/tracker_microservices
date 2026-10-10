@@ -1,109 +1,68 @@
-"""Comments router for Gateway API."""
+"""Comments router for Gateway API.
 
-import logging
-from typing import Any
+Every endpoint does the same three things and nothing else: turn the request
+into a bus contract, hand it to the service, and shape the answer for HTTP.
+No try/except, no HTTPException -- failures come back as domain exceptions
+and ``api/errors.py`` is the only place they become statuses.
+"""
 
-from fastapi import APIRouter
+from typing import Annotated
 
-from ...core.config import RPC_TIMEOUT
+from fastapi import APIRouter, Path, Query
+from task_tracker_common.contracts.base import INT4_MAX
+from task_tracker_common.contracts.commands import CommentCreationContract
+
+from ..deps import CommentsServiceDep
 from ..schemas.comment import (
     CommentCreate,
     CommentListResponse,
     CommentResponse,
     CommentUpdate,
 )
-from ._rpc import call_worker
 
-logger = logging.getLogger(__name__)
+# Path ids are bounded to the width of the column they address. The bound is
+# not decoration: the payload contracts require a positive int4, and a
+# contract that fails to build inside the bus client would surface as a bare
+# 500. The edge must be at least as strict as the contract behind it.
+CommentId = Annotated[int, Path(ge=1, le=INT4_MAX)]
+TaskIdQuery = Annotated[int, Query(ge=1, le=INT4_MAX)]
 
 router = APIRouter(prefix="/comments", tags=["comments"])
 
-QUEUE_NAME = "comments.commands"
-
-# Global RabbitMQ client (will be set in main.py lifespan)
-rabbitmq_client = None
-
-
-def set_rabbitmq_client(client):
-    """Set RabbitMQ client instance."""
-    global rabbitmq_client
-    rabbitmq_client = client
-
-
-async def _call_comments(
-    command: str, data: dict[str, Any], *, failure_status: int, failure_detail: str
-) -> dict[str, Any]:
-    """Send one comments command and return its payload, or raise the HTTP error."""
-    return await call_worker(
-        rabbitmq_client,
-        queue=QUEUE_NAME,
-        service="Comments",
-        command=command,
-        data=data,
-        timeout=RPC_TIMEOUT,
-        failure_status=failure_status,
-        failure_detail=failure_detail,
-    )
-
 
 @router.post("", response_model=CommentResponse, status_code=201)
-async def create_comment(comment: CommentCreate) -> CommentResponse:
+async def create_comment(comment: CommentCreate, service: CommentsServiceDep) -> CommentResponse:
     """Create a new comment."""
-    data = await _call_comments(
-        "create_comment",
-        comment.model_dump(),
-        failure_status=400,
-        failure_detail="Unknown error",
-    )
-    logger.info(f"Comment created successfully: {data.get('id')}")
-    return CommentResponse(**data)
+    created = await service.create(CommentCreationContract(**comment.model_dump()))
+    return CommentResponse(**created.model_dump())
 
 
 @router.get("/{comment_id}", response_model=CommentResponse)
-async def get_comment(comment_id: int) -> CommentResponse:
+async def get_comment(comment_id: CommentId, service: CommentsServiceDep) -> CommentResponse:
     """Get comment by ID."""
-    data = await _call_comments(
-        "get_comment",
-        {"id": comment_id},
-        failure_status=404,
-        failure_detail="Comment not found",
-    )
-    return CommentResponse(**data)
+    comment = await service.get(comment_id)
+    return CommentResponse(**comment.model_dump())
 
 
 @router.get("", response_model=CommentListResponse)
-async def list_comments_by_task(task_id: int) -> CommentListResponse:
-    """List comments for a task."""
-    data = await _call_comments(
-        "list_comments_by_task",
-        {"task_id": task_id},
-        failure_status=400,
-        failure_detail="Unknown error",
+async def list_comments_by_task(task_id: TaskIdQuery, service: CommentsServiceDep) -> CommentListResponse:
+    """List every comment of one task."""
+    thread = await service.list_by_task(task_id)
+
+    return CommentListResponse(
+        comments=[CommentResponse(**comment.model_dump()) for comment in thread.comments],
+        total=thread.total,
     )
-    comments = [CommentResponse(**c) for c in data["comments"]]
-    return CommentListResponse(comments=comments, total=data.get("total", len(comments)))
 
 
 @router.put("/{comment_id}", response_model=CommentResponse)
-async def update_comment(comment_id: int, comment: CommentUpdate) -> CommentResponse:
+async def update_comment(comment_id: CommentId, comment: CommentUpdate, service: CommentsServiceDep) -> CommentResponse:
     """Update comment by ID."""
-    data = await _call_comments(
-        "update_comment",
-        {"id": comment_id, "update": comment.model_dump()},
-        failure_status=404,
-        failure_detail="Comment not found",
-    )
-    logger.info(f"Comment {comment_id} updated successfully")
-    return CommentResponse(**data)
+    updated = await service.update(comment_id, comment.content)
+    return CommentResponse(**updated.model_dump())
 
 
 @router.delete("/{comment_id}", status_code=204)
-async def delete_comment(comment_id: int) -> None:
+async def delete_comment(comment_id: CommentId, service: CommentsServiceDep) -> None:
     """Delete comment by ID."""
-    await _call_comments(
-        "delete_comment",
-        {"id": comment_id},
-        failure_status=404,
-        failure_detail="Comment not found",
-    )
-    logger.info(f"Comment {comment_id} deleted successfully")
+    await service.delete(comment_id)

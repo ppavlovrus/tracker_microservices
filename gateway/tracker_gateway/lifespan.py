@@ -17,10 +17,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from task_tracker_common.observability import setup_telemetry, shutdown_telemetry
 
-from .api.routers import attachments, auth, chat, comments, oauth, sse
+from .api.routers import attachments, auth, chat, oauth, sse
 from .broker import bus
 from .broker import chat as chat_broker
 from .broker import events as events_broker
+from .broker.comments_client import CommentsBusClient
 from .broker.tags_client import TagsBusClient
 from .broker.tasks_client import TasksBusClient
 from .broker.users_client import UsersBusClient
@@ -40,6 +41,7 @@ async def startup(app: FastAPI) -> None:
     app.state.tasks_bus = TasksBusClient(rabbitmq)
     app.state.users_bus = UsersBusClient(rabbitmq)
     app.state.tags_bus = TagsBusClient(rabbitmq)
+    app.state.comments_bus = CommentsBusClient(rabbitmq)
 
     app.state.cache = await cache_storage.init_cache()
     await init_rate_limiter()
@@ -78,7 +80,6 @@ def wire_routers() -> None:
     ``Depends`` like tasks, users and tags did -- until then the debt sits
     here, in one function, rather than spread through the startup sequence.
     """
-    comments.set_rabbitmq_client(bus.client)
     attachments.set_rabbitmq_client(bus.client)
     auth.set_session_store(sessions.session_store)
 

@@ -74,6 +74,12 @@ class TagNameTakenError(GatewayError):
         super().__init__("Tag with this name already exists")
 
 
+class CommentNotFoundError(GatewayError):
+    def __init__(self, comment_id: int | None = None) -> None:
+        self.comment_id = comment_id
+        super().__init__(f"Comment {comment_id} not found" if comment_id is not None else "Comment not found")
+
+
 class InvalidCredentialsError(GatewayError):
     """A login that must not say why it failed.
 

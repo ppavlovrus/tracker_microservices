@@ -23,6 +23,7 @@ from .api.routers import (
     users,
     web,
 )
+from .broker.comments_client import CommentsBusClient
 from .broker.tags_client import TagsBusClient
 from .broker.tasks_client import TasksBusClient
 from .broker.users_client import UsersBusClient
@@ -61,6 +62,7 @@ app.state.rabbitmq = None
 app.state.tasks_bus = TasksBusClient(None)
 app.state.users_bus = UsersBusClient(None)
 app.state.tags_bus = TagsBusClient(None)
+app.state.comments_bus = CommentsBusClient(None)
 app.state.cache = None
 app.state.events_hub = None
 

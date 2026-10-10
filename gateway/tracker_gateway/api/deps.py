@@ -12,6 +12,7 @@ from fastapi import Depends, Request
 from task_tracker_common.messaging import RabbitMQClient
 
 from ..core.exceptions import BusUnavailableError
+from ..service.comments import CommentService
 from ..service.tags import TagService
 from ..service.tasks import TaskService
 from ..service.users import UserService
@@ -38,6 +39,11 @@ def get_tags_service(request: Request) -> TagService:
     return TagService(bus=state.tags_bus, cache=state.cache)
 
 
+def get_comments_service(request: Request) -> CommentService:
+    """Assemble the comments service for one request."""
+    return CommentService(bus=request.app.state.comments_bus)
+
+
 def get_rabbitmq(request: Request) -> RabbitMQClient:
     """The raw bus client, for the calls that have no contracts yet.
 
@@ -53,4 +59,5 @@ def get_rabbitmq(request: Request) -> RabbitMQClient:
 TasksServiceDep = Annotated[TaskService, Depends(get_tasks_service)]
 UsersServiceDep = Annotated[UserService, Depends(get_users_service)]
 TagsServiceDep = Annotated[TagService, Depends(get_tags_service)]
+CommentsServiceDep = Annotated[CommentService, Depends(get_comments_service)]
 RabbitMQDep = Annotated[RabbitMQClient, Depends(get_rabbitmq)]
