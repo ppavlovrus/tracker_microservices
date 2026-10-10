@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from contracts import TaskContract, UserContract
+from contracts import TagContract, TaskContract, UserContract
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
@@ -73,6 +73,43 @@ async def make_user(auth_client):
 
     for user_id in created_ids:
         await auth_client.delete(f"/users/{user_id}")
+
+
+@pytest.fixture
+async def make_tag(auth_client):
+    """Create tags and delete every one of them when the test ends.
+
+    The name is randomised: ``name`` is a unique column, and a fixed name
+    would make the second run of a failed test collide with the leftovers
+    of the first.
+    """
+    created_ids = []
+
+    async def _make(**overrides) -> TagContract:
+        payload = {"name": f"tag_probe_{uuid4().hex[:10]}"} | overrides
+        response = await auth_client.post("/tags", json=payload)
+        assert response.status_code == 201, f"setup failed: {response.text}"
+        tag = TagContract.model_validate(response.json())
+        created_ids.append(tag.id)
+        return tag
+
+    yield _make
+
+    for tag_id in created_ids:
+        await auth_client.delete(f"/tags/{tag_id}")
+
+
+@pytest.fixture
+async def tag_trash(auth_client):
+    """Tag ids to delete no matter how the test ends.
+
+    For tags the test did not create through ``make_tag`` -- the on-demand
+    tag that POST /tasks/{id}/tags leaves behind, for example.
+    """
+    ids = []
+    yield ids
+    for tag_id in ids:
+        await auth_client.delete(f"/tags/{tag_id}")
 
 
 @pytest.fixture

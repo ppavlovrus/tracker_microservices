@@ -22,6 +22,13 @@ class TagContract(Contract):
     name: str
 
 
+class TagListContract(Contract):
+    tags: list[TagContract]
+    total: int
+    limit: int
+    offset: int
+
+
 class TaskContract(Contract):
     id: int
     title: str
