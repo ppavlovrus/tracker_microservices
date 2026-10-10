@@ -44,6 +44,7 @@ from ..core.exceptions import (
     BusUnavailableError,
     EmailTakenError,
     UpstreamFailureError,
+    UserHasTasksError,
     UsernameTakenError,
     UserNotFoundError,
 )
@@ -140,6 +141,8 @@ class UsersBusClient:
         if answer.code is ErrorCode.CONFLICT:
             if answer.error_type == "username":
                 raise UsernameTakenError()
+            if answer.error_type == "tasks":
+                raise UserHasTasksError()
             raise EmailTakenError()
 
         if answer.code is ErrorCode.VALIDATION_ERROR:

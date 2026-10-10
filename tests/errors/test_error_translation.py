@@ -15,10 +15,10 @@ import tracker_attachments.handlers.attachment_handlers as attachments
 import tracker_comments.handlers.comment_handlers as comments
 import tracker_tags.handlers.tag_handlers as tags
 import tracker_tasks.handlers.task_handlers as tasks
-from fastapi import HTTPException
+import tracker_users.handlers.user_handlers as users
 from task_tracker_common.contracts.responses import ErrorCode
 from tracker_gateway.api.errors import STATUS
-from tracker_gateway.api.routers._rpc import STATUS_BY_CODE, call_worker
+from tracker_gateway.broker.tags_client import TagsBusClient
 from tracker_gateway.broker.tasks_client import MISSING_REFERENCE
 from tracker_gateway.core.exceptions import (
     BusProtocolError,
@@ -26,6 +26,7 @@ from tracker_gateway.core.exceptions import (
     SessionStoreUnavailableError,
     StatusNotFoundError,
     UpstreamFailureError,
+    UserHasTasksError,
 )
 
 
@@ -143,26 +144,19 @@ def test_a_named_column_becomes_a_400_about_the_request():
     assert STATUS[StatusNotFoundError] == (400, "Unknown status_id")
 
 
-@pytest.mark.parametrize(
-    ("code", "status"),
-    [
-        (ErrorCode.NOT_FOUND, 404),
-        (ErrorCode.VALIDATION_ERROR, 400),
-        (ErrorCode.CONFLICT, 409),
-        (ErrorCode.INTERNAL, 500),
-    ],
-)
-def test_raw_routers_take_the_status_from_the_code(code, status):
-    assert STATUS_BY_CODE[code] == status
+def test_a_user_deletion_blocked_by_tasks_becomes_a_409():
+    """The only reference that blocks a user deletion is a task naming them
+    creator (comments and attachments cascade); the conflict says so."""
+    answer = users._still_referenced()
+
+    assert answer["code"] == ErrorCode.CONFLICT
+    assert answer["error"] == "User still has tasks"
+    assert answer["error_type"] == "tasks"
+    assert STATUS[UserHasTasksError] == (409, "User still has tasks")
 
 
-def test_an_answer_without_a_code_leaves_the_endpoint_in_charge():
-    """Workers that cannot classify a failure still answer; the endpoint decides."""
-    assert STATUS_BY_CODE.get(None, 418) == 418
-
-
-class _StubClient:
-    """A bus client answering one canned envelope."""
+class _StubBus:
+    """A RabbitMQ client answering one canned envelope."""
 
     def __init__(self, envelope: dict):
         self._envelope = envelope
@@ -171,26 +165,18 @@ class _StubClient:
         return self._envelope
 
 
-async def test_a_raw_router_hides_an_unclassified_workers_text():
-    """A typed dispatcher puts the driver's words in ``error`` on purpose.
+async def test_a_typed_client_hides_the_workers_internal_text():
+    """A dispatcher puts the driver's words in ``error`` on purpose.
 
-    Until every vertical has a typed client, the raw router is the last stop
-    before the client: the words land in the log, never in the HTTP body.
+    The typed client turns INTERNAL into UpstreamFailureError and the words
+    stop in its log: what the HTTP client is told comes from the status
+    table, never from the worker.
     """
-    driver_words = 'connection refused: postgres@db:5432 "task"'
-    stub = _StubClient({"success": False, "code": ErrorCode.INTERNAL, "error": driver_words})
+    driver_words = 'connection refused: postgres@db:5432 "tag"'
+    client = TagsBusClient(_StubBus({"success": False, "code": ErrorCode.INTERNAL, "error": driver_words}))
 
-    with pytest.raises(HTTPException) as exc:
-        await call_worker(
-            stub,
-            queue="tags.commands",
-            service="Tags",
-            command="list_tags",
-            data={"limit": 1, "offset": 0},
-            timeout=5.0,
-            failure_status=500,
-            failure_detail="Unknown error",
-        )
+    with pytest.raises(UpstreamFailureError) as exc:
+        await client.get(1)
 
-    assert exc.value.status_code == 500
-    assert exc.value.detail == "Internal server error"
+    assert STATUS[UpstreamFailureError] == (500, "Internal server error")
+    assert driver_words not in str(exc.value)

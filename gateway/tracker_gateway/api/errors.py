@@ -19,6 +19,7 @@ from ..core.exceptions import (
     TagNotFoundError,
     TaskNotFoundError,
     UpstreamFailureError,
+    UserHasTasksError,
     UsernameTakenError,
     UserNotFoundError,
 )
@@ -38,6 +39,7 @@ STATUS: dict[type[GatewayError], tuple[int, str]] = {
     UserNotFoundError: (404, "User not found"),
     EmailTakenError: (409, "Email already exists"),
     UsernameTakenError: (409, "Username already exists"),
+    UserHasTasksError: (409, "User still has tasks"),
     TagNotFoundError: (404, "Tag not found"),
     TagNameTakenError: (409, "Tag with this name already exists"),
     CommentNotFoundError: (404, "Comment not found"),

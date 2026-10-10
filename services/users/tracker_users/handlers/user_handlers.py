@@ -62,6 +62,15 @@ def _conflict(exc: asyncpg.UniqueViolationError) -> Envelope:
     return rpc_error(ErrorCode.CONFLICT, "Email already exists", "email")
 
 
+def _still_referenced() -> Envelope:
+    """Translate the RESTRICT violation a user deletion can hit.
+
+    ``task.creator_id`` is the only reference that blocks a deletion (the
+    comment and attachment links cascade), so the conflict names the tasks.
+    """
+    return rpc_error(ErrorCode.CONFLICT, "User still has tasks", "tasks")
+
+
 class UserHandlers:
     """Handlers for user-related commands."""
 
@@ -176,7 +185,11 @@ class UserHandlers:
 
     async def handle_delete_user(self, command: UserDeleteContract) -> Envelope:
         """Handle ``delete_user``: report whether the row was there to delete."""
-        deleted = await self.repository.delete(command.id)
+        try:
+            deleted = await self.repository.delete(command.id)
+        except asyncpg.ForeignKeyViolationError as e:
+            logger.warning(f"User deletion blocked by a reference: ID={command.id}, {e.constraint_name}")
+            return _still_referenced()
 
         if not deleted:
             logger.warning(f"User not found for deletion: ID={command.id}")

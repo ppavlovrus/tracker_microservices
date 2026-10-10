@@ -74,6 +74,24 @@ async def test_delete_missing_user_returns_404(auth_client, make_user):
     assert second.status_code == 404
 
 
+async def test_deleting_a_user_with_tasks_answers_409(auth_client, make_user, make_task):
+    # Before the taxonomy this was a live 500 carrying the driver's words:
+    # task.creator_id is ON DELETE RESTRICT and nothing translated the
+    # violation. It is a conflict about the user, so it answers 409 naming
+    # the one reference that blocks (comments and attachments cascade).
+    user, _ = await make_user()
+    task = await make_task(creator_id=user.id)
+
+    refused = await auth_client.delete(f"/users/{user.id}")
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "User still has tasks"
+
+    # With the task gone, the same deletion goes through.
+    await auth_client.delete(f"/tasks/{task.id}")
+    deleted = await auth_client.delete(f"/users/{user.id}")
+    assert deleted.status_code == 204
+
+
 async def test_list_users_envelope_and_delta(auth_client, make_user):
     before = UserListContract.model_validate((await auth_client.get("/users")).json())
 

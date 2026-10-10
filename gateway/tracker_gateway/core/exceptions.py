@@ -63,6 +63,13 @@ class UsernameTakenError(GatewayError):
         super().__init__("Username already exists")
 
 
+class UserHasTasksError(GatewayError):
+    """Deleting a user whose tasks still name them as creator."""
+
+    def __init__(self) -> None:
+        super().__init__("User still has tasks")
+
+
 class TagNotFoundError(GatewayError):
     def __init__(self, tag_id: int | None = None) -> None:
         self.tag_id = tag_id
