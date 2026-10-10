@@ -20,6 +20,9 @@ DB_POOL_MAX_SIZE: int = int(os.getenv("DB_POOL_MAX_SIZE", "20"))
 
 # Service settings
 SERVICE_NAME: str = "users-service"
+# Same distinction as the gateway's: SERVICE_NAME names the process for the
+# bus, this one names it in traces.
+OTEL_SERVICE_NAME: str = "tracker-users"
 # The queue name is protocol, not deployment: both sides read it from the
 # same enum so a rename cannot be applied to one half of the bus.
 QUEUE_NAME: str = Queue.USERS

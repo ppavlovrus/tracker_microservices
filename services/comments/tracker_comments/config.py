@@ -20,6 +20,9 @@ DB_POOL_MAX_SIZE: int = int(os.getenv("DB_POOL_MAX_SIZE", "20"))
 
 # Service settings
 SERVICE_NAME: str = "comments-service"
+# Same distinction as the gateway's: SERVICE_NAME names the process for the
+# bus, this one names it in traces.
+OTEL_SERVICE_NAME: str = "tracker-comments"
 QUEUE_NAME: str = Queue.COMMENTS
 PREFETCH_COUNT: int = int(os.getenv("PREFETCH_COUNT", "10"))
 

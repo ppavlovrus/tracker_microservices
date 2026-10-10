@@ -19,6 +19,7 @@ from task_tracker_common.contracts.commands import (
 )
 from task_tracker_common.contracts.responses import ErrorCode, rpc_error
 from task_tracker_common.messaging import RabbitMQClient
+from task_tracker_common.observability import setup_telemetry, shutdown_telemetry
 
 from .config import (
     AMQP_URL,
@@ -30,6 +31,7 @@ from .config import (
     DB_PORT,
     DB_USER,
     LOG_LEVEL,
+    OTEL_SERVICE_NAME,
     PREFETCH_COUNT,
     QUEUE_NAME,
     S3_ACCESS_KEY,
@@ -139,6 +141,11 @@ async def startup():
     """Initialize service components."""
     global db_pool, rabbitmq_client
 
+    # First, before the pool is created: the asyncpg wrapper must be in
+    # place before the pool captures the connect callable, or no query of
+    # this process would ever be traced.
+    setup_telemetry(OTEL_SERVICE_NAME, instrument_db=True)
+
     logger.info("=" * 60)
     logger.info(f"Starting {SERVICE_NAME}...")
     logger.info("=" * 60)
@@ -213,6 +220,12 @@ async def shutdown():
 
     except Exception as e:
         logger.error(f"Error during shutdown: {e}", exc_info=True)
+
+    finally:
+        # Last, after every client that could still produce a span is gone --
+        # and even when one of the closes above failed, because those are
+        # exactly the runs whose buffered spans nobody gets a second look at.
+        shutdown_telemetry()
 
 
 async def main():

@@ -39,17 +39,19 @@ from .middleware.tracing import TracingMiddleware
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Create FastAPI application. The request span is hand-rolled in
-# middleware/tracing.py: it carries exactly the four facts we show in demos
-# and continues the caller's trace from the incoming traceparent header.
-# Nothing in the dependency set installs a tracer provider implicitly, so
-# the one pipeline observability.py sets up in the lifespan is the whole
-# story.
+# Create FastAPI application. FastAPI ships built-in OpenTelemetry since
+# 0.142: through the very provider our lifespan installs it would add a
+# second request span next to ours, plus endpoint/dependencies/serialization
+# spans under it. One explicit pipeline -- the middleware below, holding
+# exactly the four facts we show in demos -- reads better in Jaeger than two
+# request spans per request, so the built-in one is off. On FastAPI below
+# 0.142 this argument is an ignored no-op, not an error.
 app = FastAPI(
     title="Task Tracker Gateway",
     description="API Gateway for Task Tracker microservices",
     version="0.1.0",
     lifespan=lifespan,
+    telemetry={"tracing": False, "operation_spans": False, "metrics": False, "logs": False},
 )
 
 # Domain errors become HTTP statuses here and nowhere else. Registering the

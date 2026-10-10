@@ -22,8 +22,15 @@ from aio_pika.abc import (
     AbstractExchange,
     AbstractQueue,
 )
+from opentelemetry import propagate, trace
+from opentelemetry.trace import SpanKind
 
 logger = logging.getLogger(__name__)
+
+# A proxy until setup_telemetry installs the real provider. Spans started
+# before that are no-ops, which is exactly right for a process that never
+# opted into tracing: the bus works with or without telemetry.
+tracer = trace.get_tracer(__name__)
 
 
 def _command_header(message: dict[str, Any]) -> dict[str, str] | None:
@@ -145,7 +152,12 @@ class RabbitMQClient:
         self.futures[correlation_id] = future
 
         try:
-            # Publish request
+            # Publish request. The current span -- usually the HTTP request
+            # the gateway is serving -- travels as a traceparent header, so
+            # the worker continues this trace instead of starting an
+            # unrelated one.
+            headers = _command_header(message) or {}
+            propagate.inject(headers)
             await self.channel.default_exchange.publish(
                 Message(
                     body=json.dumps(message).encode(),
@@ -158,7 +170,7 @@ class RabbitMQClient:
                     # the management UI and in a firehose trace without
                     # decoding the body, and it is what a headers exchange
                     # would bind on if this ever moves to broker-side routing.
-                    headers=_command_header(message),
+                    headers=headers,
                 ),
                 routing_key=queue_name,
             )
@@ -263,7 +275,7 @@ class RabbitMQClient:
         callback: Callable[[dict[str, Any], IncomingMessage], Awaitable[dict[str, Any]]],
         queue_name: str,
     ) -> None:
-        """Run one delivery: parse, hand to the callback, answer, acknowledge."""
+        """Run one delivery: parse, trace, hand to the callback, answer, acknowledge."""
         async with message.process():
             try:
                 payload = json.loads(message.body.decode())
@@ -271,13 +283,32 @@ class RabbitMQClient:
                     f"[{self.service_name}] Received message from {queue_name}, "
                     f"correlation_id={message.correlation_id}"
                 )
-                await self._reply(message, await callback(payload, message))
+                answer = await self._run_traced(message, payload, callback)
+                await self._reply(message, answer)
             except Exception as e:
                 logger.error(f"[{self.service_name}] Error processing message: {e}", exc_info=True)
                 await self._reply(
                     message,
                     {"success": False, "error": "Internal error", "error_type": type(e).__name__},
                 )
+
+    async def _run_traced(
+        self,
+        message: IncomingMessage,
+        payload: dict[str, Any],
+        callback: Callable[[dict[str, Any], IncomingMessage], Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Run the handler under a span continuing the caller's trace.
+
+        The traceparent the caller injected into the message headers is the
+        link: without it every worker span lands in Jaeger as an unrelated
+        root trace, and the request-to-query chain the demos are about does
+        not exist. A message without one still gets its span -- a fresh root.
+        """
+        context = propagate.extract(dict(message.headers or {}))
+        name = f"command {payload.get('command', 'unknown')}"
+        with tracer.start_as_current_span(name, context=context, kind=SpanKind.CONSUMER):
+            return await callback(payload, message)
 
     async def stop_consuming(self, drain_timeout: float = 30.0) -> None:
         """Stop taking new messages, then let the ones in flight finish.
