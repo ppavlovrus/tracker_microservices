@@ -3,9 +3,10 @@
 The router above this layer knows HTTP and nothing else; the client below it
 knows the bus and nothing else. Users have no cache and no change
 notifications, so unlike the tasks service this layer is thin -- what it owns
-is the credential handling: passwords are hashed and verified here, in a
-thread (bcrypt is CPU-bound and would stall the event loop), and the login
-timing invariant lives here where no router can forget it.
+is the credential handling: passwords are hashed and verified through
+``core/security`` in a thread (bcrypt is CPU-bound and would stall the event
+loop), and the login timing invariant lives here where no router can forget
+it.
 
 Written in bus contracts, not in the HTTP schemas from ``api/schemas``:
 importing those would point an inner layer at an outer one, and the auth
@@ -16,7 +17,6 @@ import asyncio
 import logging
 from typing import Any
 
-import bcrypt
 from task_tracker_common.contracts.commands import (
     UserCreateContract,
     UserUpdatePayloadContract,
@@ -26,25 +26,9 @@ from task_tracker_common.contracts.responses import UserAccount, UserData, UserL
 
 from ..broker.users_client import UsersBusClient
 from ..core.exceptions import InvalidCredentialsError, UserNotFoundError
+from ..core.security import DUMMY_HASH, hash_password, verify_password
 
 logger = logging.getLogger(__name__)
-
-# A real bcrypt hash used as a constant-time decoy when the username is
-# unknown, so a failed login does the same work whether or not the user exists.
-_DUMMY_HASH = "$2b$12$oOUmtFn7fm50bdt91.qyEelpY.SIYTtITMl8s4/O4evApDalGS.R2"
-
-
-def _hash_password(password: str) -> str:
-    """Hash a password with bcrypt. Blocking; call via a thread."""
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-
-def _verify_password(password: str, password_hash: str) -> bool:
-    """Constant-time bcrypt check. Never raises on a malformed or empty hash."""
-    try:
-        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
-    except (ValueError, TypeError):
-        return False
 
 
 class UserService:
@@ -60,7 +44,7 @@ class UserService:
         The plaintext stops here: only the hash goes onto the bus, so a
         worker log or a queue dump can never contain a password.
         """
-        password_hash = await asyncio.to_thread(_hash_password, password)
+        password_hash = await asyncio.to_thread(hash_password, password)
         request = UserCreateContract(username=username, email=email, password_hash=password_hash)
 
         created = await self._bus.create(request)
@@ -83,7 +67,7 @@ class UserService:
         among them is hashed and travels on as ``password_hash``.
         """
         if "password" in changes:
-            changes["password_hash"] = await asyncio.to_thread(_hash_password, changes.pop("password"))
+            changes["password_hash"] = await asyncio.to_thread(hash_password, changes.pop("password"))
 
         updated = await self._bus.update(user_id, UserUpdatePayloadContract(**changes))
         logger.info(f"User {user_id} updated")
@@ -105,10 +89,10 @@ class UserService:
         try:
             account = await self._bus.get_by_username(username)
         except UserNotFoundError:
-            await asyncio.to_thread(_verify_password, password, _DUMMY_HASH)
+            await asyncio.to_thread(verify_password, password, DUMMY_HASH)
             raise InvalidCredentialsError() from None
 
-        ok = await asyncio.to_thread(_verify_password, password, account.password_hash or "")
+        ok = await asyncio.to_thread(verify_password, password, account.password_hash or "")
         if not ok:
             raise InvalidCredentialsError()
 

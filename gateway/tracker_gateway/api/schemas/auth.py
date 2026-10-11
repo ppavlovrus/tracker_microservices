@@ -19,6 +19,12 @@ class UserPublic(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    """Returned on successful login."""
+    """Returned on successful login: the user, plus a token for API clients.
+
+    The browser keeps using the session cookie this response also sets; the
+    ``access_token`` is for clients that authenticate with
+    ``Authorization: Bearer`` and own no cookie jar.
+    """
 
     user: UserPublic
+    access_token: str

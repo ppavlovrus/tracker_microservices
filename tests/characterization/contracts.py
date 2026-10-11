@@ -116,6 +116,9 @@ class UserPublicContract(Contract):
 
 class LoginResponseContract(Contract):
     user: UserPublicContract
+    # Added with the Bearer path: the token API clients send as
+    # Authorization: Bearer. The browser's cookie is set alongside it.
+    access_token: str
 
 
 class StatsContract(Contract):

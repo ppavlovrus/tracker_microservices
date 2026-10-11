@@ -2,20 +2,27 @@
 
 The credential work -- the lookup, the bcrypt rounds, the rule that an
 unknown username and a wrong password must be one indistinguishable failure --
-lives in the user service. What remains here is HTTP: the cookie and the
-session records.
+lives in the user service. What remains here is HTTP: the cookie, the session
+records, and the access token for API clients.
+
+A login answers both authentication paths at once: the browser gets its
+session cookie, and an API client gets a Bearer token in the body. The OAuth
+callback cannot do the second half -- a 302 redirect has no body to read --
+so the redirect flow stays on cookies alone.
 """
 
 import logging
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+import jwt
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response
 
 from ...core.config import (
     COOKIE_SECURE,
     SESSION_COOKIE_NAME,
     SESSION_TTL,
 )
+from ...core.security import bearer_token, create_access_token, decode_access_token
 from ..deps import UsersServiceDep
 from ..schemas.auth import LoginRequest, LoginResponse, UserPublic
 
@@ -33,9 +40,25 @@ def set_session_store(store) -> None:
 
 
 async def get_current_user(
+    authorization: Annotated[str | None, Header()] = None,
     session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
 ) -> dict[str, Any] | None:
-    """Resolve the session cookie to a user record, or None if unauthenticated."""
+    """Resolve the caller: a Bearer token first, then the session cookie.
+
+    Both paths answer with the session record's shape -- ``user_id``,
+    ``username``, ``email`` -- so the caller cannot tell which one applied.
+    A token that does not verify resolves to no user, same as a missing
+    cookie: the distinct expired/invalid wording belongs to the middleware,
+    which serves clients that act on it.
+    """
+    token = bearer_token(authorization)
+    if token is not None:
+        try:
+            claims = decode_access_token(token)
+        except jwt.PyJWTError:
+            return None
+        return {"user_id": int(claims["sub"]), "username": claims["username"], "email": claims.get("email")}
+
     if session_store is None or not session_token:
         return None
     return await session_store.get(session_token)
@@ -77,7 +100,13 @@ async def login(credentials: LoginRequest, response: Response, users: UsersServi
         samesite="lax",
         path="/",
     )
-    return LoginResponse(user=UserPublic(id=account.id, username=account.username, email=account.email))
+    # The same identity, signed for API clients: no cookie jar, no store
+    # round-trip, its own expiry.
+    access_token = create_access_token({"id": account.id, "username": account.username, "email": account.email})
+    return LoginResponse(
+        user=UserPublic(id=account.id, username=account.username, email=account.email),
+        access_token=access_token,
+    )
 
 
 @router.post("/logout", status_code=204)

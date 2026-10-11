@@ -43,6 +43,14 @@ SESSION_COOKIE_NAME: str = os.getenv("SESSION_COOKIE_NAME", "session")
 # Set the Secure flag on the session cookie (enable behind HTTPS).
 COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 
+# JWT access tokens (the Authorization: Bearer path). One secret because one
+# process both signs and verifies. The default keeps the stand turnkey (and
+# long enough for HS256: RFC 7518 asks for 32+ bytes); a real deployment
+# sets the env var.
+JWT_SECRET: str = os.getenv("JWT_SECRET", "dev-only-secret-change-me-please-im-seriously")
+JWT_ACCESS_TTL: int = int(os.getenv("JWT_ACCESS_TTL", "900"))
+JWT_ISSUER: str = os.getenv("JWT_ISSUER", "tracker-gateway")
+
 # Yandex OAuth (authorization code flow). Disabled unless both the client id
 # and the secret are provided. Register the app at https://oauth.yandex.ru.
 YANDEX_CLIENT_ID: str = os.getenv("YANDEX_CLIENT_ID", "")
