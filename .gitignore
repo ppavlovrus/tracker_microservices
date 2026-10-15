@@ -209,3 +209,7 @@ __marimo__/
 # Editor and OS noise
 .idea/
 .DS_Store
+
+# Agent tooling local state, not project content
+.claude/
+.zcode/
