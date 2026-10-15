@@ -246,11 +246,47 @@ services:
       prometheus:
         condition: service_started
 
+  kafka:
+    restart: unless-stopped
+    image: apache/kafka:3.9.0
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker, controller
+      # Listeners bind as ://:port (empty host = all interfaces). Writing
+      # HOST://29092 without the second colon parses as host "29092" with no
+      # port and the broker dies with "Unable to parse ... to a broker
+      # endpoint" -- a syntax bug the error message does not spell out.
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,HOST://:29092
+      # What the broker tells clients to connect to. INTERNAL serves the
+      # compose network, HOST serves the developer's terminal: Kafka hands the
+      # advertised address to the client on connect, so one listener cannot
+      # serve both audiences.
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,HOST://localhost:29092
+      # Every listener name must appear here with a protocol; a name missing
+      # from the map is exactly the "Unable to parse HOST://... to a broker
+      # endpoint" crash this block survived once.
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      # The property is offsets.topic.replication.factor -- drop the S and the
+      # env var silently configures nothing, leaving the default of 3 on a
+      # single broker, which kills the first consumer-group commit.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
 volumes:
   pgdata:
   miniodata:
   redisdata:
   promdata:
   grafanadata:
-
-
