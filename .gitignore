@@ -211,5 +211,5 @@ __marimo__/
 .DS_Store
 
 # Agent tooling local state, not project content
-.claude/
+.claude
 .zcode/
