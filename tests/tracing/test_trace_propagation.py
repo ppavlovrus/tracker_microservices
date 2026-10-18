@@ -134,10 +134,20 @@ async def test_the_trace_reaches_the_sse_consumer_through_the_topic():
         task_id = created.json()["id"]
         await client.delete(f"/tasks/{task_id}")
 
-    # The consume span is the gateway's second batch: wait for it by name.
+    # The consume span arrives in the gateway's batch, the command span in
+    # the worker's -- either can land first, so the poll waits for BOTH
+    # before judging the parent link (the same lesson the first test here
+    # learned about half-arrived traces).
     trace_id = traceparent.split("-")[1]
     deadline = time.monotonic() + 30.0
     trace = None
+
+    def _complete(candidate: dict) -> bool:
+        names = {span["operationName"] for span in candidate["spans"]}
+        processes = candidate["processes"]
+        services = {processes[span["processID"]]["serviceName"] for span in candidate["spans"]}
+        return "consume task.created" in names and "tracker-tasks" in services
+
     async with httpx.AsyncClient(base_url=JAEGER_URL, trust_env=False) as jaeger:
         while time.monotonic() < deadline:
             response = await jaeger.get(f"/api/traces/{trace_id}")
@@ -146,10 +156,11 @@ async def test_the_trace_reaches_the_sse_consumer_through_the_topic():
                 continue
             data = response.json().get("data") or []
             trace = data[0] if data else None
-            if trace is not None and any(s["operationName"] == "consume task.created" for s in trace["spans"]):
+            if trace is not None and _complete(trace):
                 break
             await asyncio.sleep(1.0)
     assert trace is not None, f"Jaeger never received trace {trace_id}"
+    assert _complete(trace), "The trace never carried both the worker and the consumer halves"
 
     spans = trace["spans"]
     processes = trace["processes"]
