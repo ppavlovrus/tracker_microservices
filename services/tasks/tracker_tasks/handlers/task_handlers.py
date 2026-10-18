@@ -36,6 +36,8 @@ from task_tracker_common.contracts.responses import (
     rpc_error,
     rpc_ok,
 )
+from task_tracker_common.events import TaskEvent, TaskEventType
+from task_tracker_common.messaging.kafka import EventProducer
 
 from ..repositories.task_repository import TaskRepository
 
@@ -65,12 +67,18 @@ def _missing_reference(exc: asyncpg.ForeignKeyViolationError) -> Envelope:
 class TaskHandlers:
     """Handlers for task-related commands."""
 
-    def __init__(self, repository: TaskRepository):
-        """Initialize handlers with the repository they read and write through."""
+    def __init__(self, repository: TaskRepository, events: EventProducer):
+        """Take the repository to write through and the producer to announce with.
+
+        ``events`` is best-effort by contract: it may not have started, and
+        ``publish`` swallows failures, so a handler never fails a write
+        because the announcement could not be delivered.
+        """
         self.repository = repository
+        self.events = events
 
     async def handle_create_task(self, command: TaskCreationContract) -> Envelope:
-        """Handle ``create_task``: insert the row, answer with the stored task."""
+        """Handle ``create_task``: insert the row, announce it, answer."""
         try:
             task = await self.repository.create(command.model_dump())
         except asyncpg.ForeignKeyViolationError as e:
@@ -80,7 +88,13 @@ class TaskHandlers:
         logger.info(f"Task created successfully: ID={task['id']}")
         # INSERT ... RETURNING cannot produce the tags aggregate, and a task
         # cannot have tags before it has an id, so the empty list is exact.
-        return rpc_ok(TaskData, {**task, "tags": []})
+        answer = rpc_ok(TaskData, {**task, "tags": []})
+
+        # The fact, not the request: the event describes what the database
+        # now holds, keyed by the task so its events keep their order.
+        event = TaskEvent.now(TaskEventType.CREATED, task["id"], {"task": {**task, "tags": []}})
+        await self.events.publish(event, key=event.kafka_key())
+        return answer
 
     async def handle_get_task(self, command: TaskGetByIdContract) -> Envelope:
         """Handle ``get_task``: one row with its tags already aggregated by the query."""
@@ -117,7 +131,10 @@ class TaskHandlers:
         tags = await self.repository.get_tags_for_task(command.id)
 
         logger.info(f"Task updated successfully: ID={command.id}")
-        return rpc_ok(TaskData, {**task, "tags": tags})
+        answer = rpc_ok(TaskData, {**task, "tags": tags})
+        event = TaskEvent.now(TaskEventType.UPDATED, task["id"], {"task": {**task, "tags": tags}})
+        await self.events.publish(event, key=event.kafka_key())
+        return answer
 
     async def handle_delete_task(self, command: TaskDeleteContract) -> Envelope:
         """Handle ``delete_task``: report whether the row was there to delete."""
@@ -128,7 +145,10 @@ class TaskHandlers:
             return rpc_error(ErrorCode.NOT_FOUND, TASK_NOT_FOUND)
 
         logger.info(f"Task deleted successfully: ID={command.id}")
-        return rpc_ok(TaskDelete, {"id": command.id, "deleted": True})
+        answer = rpc_ok(TaskDelete, {"id": command.id, "deleted": True})
+        event = TaskEvent.now(TaskEventType.DELETED, command.id, {"id": command.id})
+        await self.events.publish(event, key=event.kafka_key())
+        return answer
 
     async def handle_list_tasks(self, command: TaskListContract) -> Envelope:
         """Handle ``list_tasks``: one page plus the count over the whole table.
@@ -163,7 +183,10 @@ class TaskHandlers:
         tags = await self.repository.get_tags_for_task(command.task_id)
 
         logger.info(f"Tag {command.tag_id} linked to task {command.task_id}")
-        return rpc_ok(TaskTags, {"task_id": command.task_id, "tags": tags})
+        answer = rpc_ok(TaskTags, {"task_id": command.task_id, "tags": tags})
+        event = TaskEvent.now(TaskEventType.UPDATED, command.task_id, {"id": command.task_id})
+        await self.events.publish(event, key=event.kafka_key())
+        return answer
 
     async def handle_remove_task_tag(self, command: TaskRemoveTagContract) -> Envelope:
         """Handle ``remove_task_tag``: unlink a tag, answer with the task's tags."""
@@ -171,4 +194,7 @@ class TaskHandlers:
         tags = await self.repository.get_tags_for_task(command.task_id)
 
         logger.info(f"Tag {command.tag_id} unlinked from task {command.task_id}")
-        return rpc_ok(TaskTags, {"task_id": command.task_id, "tags": tags})
+        answer = rpc_ok(TaskTags, {"task_id": command.task_id, "tags": tags})
+        event = TaskEvent.now(TaskEventType.UPDATED, command.task_id, {"id": command.task_id})
+        await self.events.publish(event, key=event.kafka_key())
+        return answer

@@ -40,6 +40,8 @@ services:
       - DB_HOST=postgres
       - AMQP_URL=amqp://guest:guest@rabbitmq/
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - KAFKA_BOOTSTRAP_URL=kafka:9092
+      - KAFKA_EVENTS_TOPIC=task.events
     depends_on:
       postgres:
         condition: service_healthy

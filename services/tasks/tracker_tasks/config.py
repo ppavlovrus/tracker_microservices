@@ -28,5 +28,10 @@ OTEL_SERVICE_NAME: str = "tracker-tasks"
 QUEUE_NAME: str = Queue.TASKS
 PREFETCH_COUNT: int = int(os.getenv("PREFETCH_COUNT", "10"))
 
+# Kafka (the event leg). Events are best-effort: a broker that is down
+# degrades notifications, not commands.
+KAFKA_BOOTSTRAP_URL: str = os.getenv("KAFKA_BOOTSTRAP_URL", "localhost:9092")
+KAFKA_EVENTS_TOPIC: str = os.getenv("KAFKA_EVENTS_TOPIC", "task.events")
+
 # Logging
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

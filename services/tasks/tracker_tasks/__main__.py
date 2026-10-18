@@ -23,6 +23,7 @@ from task_tracker_common.contracts.commands import (
 )
 from task_tracker_common.contracts.responses import ErrorCode, rpc_error
 from task_tracker_common.messaging import RabbitMQClient
+from task_tracker_common.messaging.kafka import EventProducer
 from task_tracker_common.observability import setup_telemetry, shutdown_telemetry
 
 from .config import (
@@ -34,6 +35,8 @@ from .config import (
     DB_POOL_MIN_SIZE,
     DB_PORT,
     DB_USER,
+    KAFKA_BOOTSTRAP_URL,
+    KAFKA_EVENTS_TOPIC,
     LOG_LEVEL,
     OTEL_SERVICE_NAME,
     PREFETCH_COUNT,
@@ -50,6 +53,7 @@ logger = logging.getLogger(__name__)
 # Global instances
 db_pool: asyncpg.Pool = None
 rabbitmq_client: RabbitMQClient = None
+event_producer: EventProducer | None = None
 shutdown_event = None
 
 # Command name -> (payload contract, handler). Filled in at startup, once the
@@ -138,7 +142,7 @@ async def handle_command(payload: dict, message: IncomingMessage) -> dict:
 
 async def startup():
     """Initialize service components."""
-    global db_pool, rabbitmq_client
+    global db_pool, rabbitmq_client, event_producer
 
     # First, before the pool is created: the asyncpg wrapper must be in
     # place before the pool captures the connect callable, or no query of
@@ -153,9 +157,18 @@ async def startup():
         # Create database pool
         db_pool = await create_db_pool()
 
+        # Announcing task changes is best-effort: a broker that is down
+        # degrades notifications, not commands, and must not hold startup
+        # hostage while it retries.
+        event_producer = EventProducer(KAFKA_BOOTSTRAP_URL, KAFKA_EVENTS_TOPIC)
+        try:
+            await asyncio.wait_for(event_producer.start(), timeout=10.0)
+        except TimeoutError:
+            logger.warning("Kafka producer did not start in time; events are off until restart")
+
         # Initialize repository and handlers
         task_repository = TaskRepository(db_pool)
-        task_handlers = TaskHandlers(task_repository)
+        task_handlers = TaskHandlers(task_repository, event_producer)
         command_table.update(build_command_table(task_handlers))
 
         logger.info(f"Repository and handlers initialized ({len(command_table)} commands)")
@@ -197,6 +210,12 @@ async def shutdown():
             await rabbitmq_client.stop_consuming()
             await rabbitmq_client.close()
             logger.info("RabbitMQ connection closed")
+
+        # After the bus: handlers have finished, so no event is still being
+        # published; stop flushes whatever the producer had in flight.
+        if event_producer:
+            await event_producer.stop()
+            event_producer = None
 
         # Close database pool
         if db_pool:
