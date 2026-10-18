@@ -28,7 +28,7 @@ def get_tasks_service(request: Request) -> TaskService:
     keeps the service free of any assumption that it outlives a request.
     """
     state = request.app.state
-    return TaskService(bus=state.tasks_bus, cache=state.cache, events=state.events_hub)
+    return TaskService(bus=state.tasks_bus, cache=state.cache)
 
 
 def get_users_service(request: Request) -> UserService:

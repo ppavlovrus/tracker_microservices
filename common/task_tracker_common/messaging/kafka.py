@@ -18,8 +18,10 @@ the knob to revisit the day the answer to "may we lose an event?" changes.
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
 
-from aiokafka import AIOKafkaProducer
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import KafkaError
 from pydantic import BaseModel
 
@@ -100,3 +102,99 @@ class EventProducer:
         except (KafkaError, TimeoutError) as e:
             # A dropped notification must not fail the write that caused it.
             logger.warning(f"Event publish failed (ignored): {e}")
+
+
+# How long to wait before rejoining after the broker goes away mid-stream.
+_REJOIN_DELAY = 2.0
+
+
+class EventConsumer:
+    """Reads JSON events from one topic as one group, for the process's life.
+
+    A consumer group is a bookmark: every group reads its own copy of the
+    log, and its committed offset says where it stopped. That is why each
+    consumer instance invents its own group id -- a notification board needs
+    every event on every instance (broadcast), while one shared group would
+    split the log between instances (load balancing) and every second client
+    would miss half the notifications. ``auto_offset_reset="latest"`` keeps
+    the old ephemeral policy: a fresh group starts at the tip, and a
+    reconnecting instance does not replay history at the board.
+    """
+
+    def __init__(self, bootstrap_servers: str, topic: str, group_id: str) -> None:
+        """Remember the address, topic and group; nothing connects yet."""
+        self._bootstrap_servers = bootstrap_servers
+        self._topic = topic
+        self._group_id = group_id
+        self._consumer: AIOKafkaConsumer | None = None
+
+    @property
+    def started(self) -> bool:
+        """True once the group is joined and events can arrive."""
+        return self._consumer is not None
+
+    async def start(self) -> bool:
+        """Join the group. False when the broker is unreachable."""
+        consumer = AIOKafkaConsumer(
+            self._topic,
+            bootstrap_servers=self._bootstrap_servers,
+            group_id=self._group_id,
+            auto_offset_reset="latest",
+        )
+        try:
+            await consumer.start()
+        except KafkaError as e:
+            logger.warning(f"Kafka consumer could not join ({self._group_id}): {e}")
+            await consumer.stop()
+            return False
+        except BaseException:
+            # Mirror EventProducer.start: a cancel mid-join must stop the
+            # half-started consumer, or its bootstrap connection leaks.
+            await consumer.stop()
+            raise
+
+        self._consumer = consumer
+        logger.info(f"Event consumer joined: topic={self._topic}, group={self._group_id}")
+        return True
+
+    async def stop(self) -> None:
+        """Leave the group, committing what was read. Safe to call twice."""
+        if self._consumer is not None:
+            await self._consumer.stop()
+            self._consumer = None
+            logger.info("Event consumer stopped")
+
+    async def run(self, handler: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+        """Poll forever, handing each decoded event to ``handler``.
+
+        A message that does not parse is logged and skipped: one poison
+        payload must not stall the board behind it. A broker that goes away
+        mid-stream drops the consumer out of the loop -- it sleeps, rejoins,
+        and continues from the committed offset.
+        """
+        while True:
+            if self._consumer is None and not await self.start():
+                await asyncio.sleep(_REJOIN_DELAY)
+                continue
+            try:
+                async for message in self._consumer:
+                    if message.value is None:
+                        # A tombstone (compaction delete marker): no fact to tell.
+                        logger.warning("Event has no value (tombstone), skipping")
+                        continue
+                    try:
+                        event = json.loads(message.value.decode("utf-8"))
+                    except (ValueError, UnicodeDecodeError):
+                        logger.warning("Event does not parse as JSON, skipping")
+                        continue
+                    await handler(event)
+            except KafkaError as e:
+                logger.warning(f"Event consumer dropped, rejoining: {e}")
+                await self.stop()
+                await asyncio.sleep(_REJOIN_DELAY)
+            except Exception as e:
+                # Same contract the Redis listener had: any unexpected error
+                # rejoins instead of killing the leg. CancelledError passes.
+                logger.warning(f"Event consumer crashed, rejoining: {e!r}")
+                await self.stop()
+                await asyncio.sleep(_REJOIN_DELAY)

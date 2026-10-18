@@ -51,6 +51,12 @@ JWT_SECRET: str = os.getenv("JWT_SECRET", "dev-only-secret-change-me-please-im-s
 JWT_ACCESS_TTL: int = int(os.getenv("JWT_ACCESS_TTL", "900"))
 JWT_ISSUER: str = os.getenv("JWT_ISSUER", "tracker-gateway")
 
+# Kafka (the event leg's read side: SSE notifications). The consumer joins
+# inside the listener task, so a broker that is down leaves SSE 503 without
+# holding the gateway hostage.
+KAFKA_BOOTSTRAP_URL: str = os.getenv("KAFKA_BOOTSTRAP_URL", "localhost:9092")
+KAFKA_EVENTS_TOPIC: str = os.getenv("KAFKA_EVENTS_TOPIC", "task.events")
+
 # Yandex OAuth (authorization code flow). Disabled unless both the client id
 # and the secret are provided. Register the app at https://oauth.yandex.ru.
 YANDEX_CLIENT_ID: str = os.getenv("YANDEX_CLIENT_ID", "")
@@ -78,12 +84,12 @@ CHAT_HEARTBEAT_INTERVAL: float = float(os.getenv("CHAT_HEARTBEAT_INTERVAL", "25"
 CHAT_HEARTBEAT_TIMEOUT: float = float(os.getenv("CHAT_HEARTBEAT_TIMEOUT", "60"))
 CHAT_MAX_MESSAGE_LENGTH: int = int(os.getenv("CHAT_MAX_MESSAGE_LENGTH", "1000"))
 
-# SSE task notifications (Server-Sent Events + Redis pub/sub). Live task events
+# SSE task notifications (Server-Sent Events, fed by the Kafka consumer). Live task events
 # (created/updated/deleted) are pushed to connected browsers over a one-way
-# stream; delivery goes through pub/sub so it survives scaling the gateway.
-# Unlike the chat, events are ephemeral: nothing is replayed on connect.
+# stream; every gateway instance reads the events topic in its own consumer
+# group, so notifications survive scaling the gateway. Unlike the chat,
+# events are ephemeral: nothing is replayed on connect.
 SSE_ENABLED: bool = os.getenv("SSE_ENABLED", "true").lower() == "true"
-SSE_CHANNEL: str = os.getenv("SSE_CHANNEL", "events:tasks")
 # Emit a keep-alive comment after this many seconds of silence so idle streams
 # stay open through proxies and disconnects are noticed promptly.
 SSE_HEARTBEAT_INTERVAL: float = float(os.getenv("SSE_HEARTBEAT_INTERVAL", "25"))

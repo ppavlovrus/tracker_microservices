@@ -1,18 +1,23 @@
-"""Redis-backed hub for Server-Sent task events.
+"""Kafka-fed hub for Server-Sent task events.
 
-Write routers publish task events (created/updated/deleted) to a Redis
-channel; every gateway instance subscribes to that channel and fans each
-event out to its local SSE connections, so notifications keep working when
-the gateway is scaled horizontally.
+The tasks worker announces every write to the ``task.events`` topic; each
+gateway instance reads the topic in its own consumer group and fans each
+event out to its local SSE connections. A group is a bookmark: a group per
+instance means every instance sees every event -- broadcast, which is what a
+notification board wants. (One shared group would split the log between the
+instances: load balancing, and every second client would miss half the
+notifications.)
 
-Two deliberate differences from the chat hub:
+Two deliberate policies, carried over from the Redis hub this replaced:
 
-* Events are ephemeral. There is no history list and nothing is replayed on
-  connect -- a notification only matters live, and stale ones would just be
-  noise on the board.
-* Publishing is best-effort. A task write must succeed even when the event
-  cannot be delivered, so ``publish`` swallows Redis errors and never raises
-  into the request path.
+* Events are live-only. A fresh group starts at the tip of the log
+  (``auto_offset_reset="latest"``), nothing is replayed on connect -- a
+  notification only matters now, and stale ones would just be noise on the
+  board. The log still keeps an hour of history, so a replay stays possible
+  the day that policy changes.
+* Reading is best-effort, and so is arriving: a broker that is down leaves
+  the hub unavailable (SSE answers 503) while everything else serves on,
+  and it rejoins on its own when the broker returns.
 
 Each SSE connection owns a bounded ``asyncio.Queue``. A client that cannot
 keep up has its oldest events dropped rather than being allowed to grow the
@@ -24,55 +29,36 @@ import json
 import logging
 from contextlib import suppress
 from typing import Any
+from uuid import uuid4
 
-from redis import asyncio as aioredis
-from redis.exceptions import RedisError
+from pydantic import ValidationError
+from task_tracker_common.events import TaskEvent
+from task_tracker_common.messaging.kafka import EventConsumer
 
-from ..core.config import REDIS_URL, SSE_CHANNEL, SSE_ENABLED, SSE_MAX_QUEUE
+from ..core.config import KAFKA_BOOTSTRAP_URL, KAFKA_EVENTS_TOPIC, SSE_ENABLED, SSE_MAX_QUEUE
 
 logger = logging.getLogger(__name__)
 
-# How long to wait before re-subscribing after a pub/sub failure.
-_LISTENER_RETRY_DELAY = 2.0
-
 
 class EventsHub:
-    """Fan task events out to local SSE streams via Redis pub/sub."""
+    """Fan task events out to local SSE streams, fed by Kafka."""
 
-    def __init__(self, redis_url: str, channel: str, max_queue: int):
-        self._redis_url = redis_url
-        self._channel = channel
+    def __init__(self, bootstrap_servers: str, topic: str, max_queue: int) -> None:
+        """One consumer in a group of its own, plus the local queues."""
+        # A group id per hub start is what makes this broadcast: each gateway
+        # instance reads everything. Fixed per process, unique per start.
+        self._consumer = EventConsumer(bootstrap_servers, topic, group_id=f"sse-{uuid4().hex}")
         self._max_queue = max_queue
-        self._client: aioredis.Redis | None = None
         self._queues: set[asyncio.Queue] = set()
 
     @property
     def available(self) -> bool:
-        """True when Redis is reachable and the hub can serve clients."""
-        return self._client is not None
-
-    async def connect(self) -> None:
-        """Open the connection and ping. On failure the hub stays down."""
-        client = aioredis.from_url(
-            self._redis_url,
-            encoding="utf-8",
-            decode_responses=True,
-            socket_connect_timeout=2,
-        )
-        try:
-            await client.ping()
-        except RedisError as e:
-            logger.warning(f"Redis unavailable, events hub down: {e}")
-            await client.aclose()
-            return
-
-        self._client = client
-        logger.info(f"Events hub connected: channel={self._channel}")
+        """True when the consumer has joined and events can arrive."""
+        return self._consumer.started
 
     async def close(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        """Leave the group; the queues belong to the SSE connections."""
+        await self._consumer.stop()
 
     # -- local subscribers -------------------------------------------------
 
@@ -87,47 +73,38 @@ class EventsHub:
         self._queues.discard(queue)
         logger.info(f"SSE client unsubscribed ({len(self._queues)} online)")
 
-    # -- publishing --------------------------------------------------------
-
-    async def publish(self, event: dict[str, Any]) -> None:
-        """Broadcast an event via pub/sub. Best-effort: never raises."""
-        if self._client is None:
-            return
-        try:
-            await self._client.publish(self._channel, json.dumps(event))
-        except RedisError as e:
-            # A dropped notification must not fail the task write that caused it.
-            logger.warning(f"Event publish failed (ignored): {e}")
-
-    # -- pub/sub listener --------------------------------------------------
-
-    async def _consume(self) -> None:
-        """Subscribe and fan events out until the subscription breaks."""
-        async with self._client.pubsub() as pubsub:
-            await pubsub.subscribe(self._channel)
-            async for item in pubsub.listen():
-                if item["type"] == "message":
-                    self._fan_out(item["data"])
+    # -- the bridge --------------------------------------------------------
 
     async def run_listener(self) -> None:
-        """Subscribe to the channel and fan events out to local queues.
+        """Read the topic for the lifetime of the app and fan events out.
 
-        Runs for the lifetime of the app (one task per gateway instance) and
-        re-subscribes after transient Redis failures.
+        The consumer joins (and rejoins) on its own; this wrapper exists so
+        shutdown has one task to cancel, the shape the Redis listener had.
         """
-        while True:
-            if self._client is None:
-                await asyncio.sleep(_LISTENER_RETRY_DELAY)
-                await self.connect()
-                continue
-            try:
-                await self._consume()
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                # A dead listener means events are accepted but never delivered.
-                logger.warning(f"Events listener dropped, retrying: {e}")
-                await asyncio.sleep(_LISTENER_RETRY_DELAY)
+        await self._consumer.run(self._deliver)
+
+    async def _deliver(self, raw_event: dict[str, Any]) -> None:
+        """Validate one event and flatten it onto the SSE wire.
+
+        ``TaskEvent`` is the inter-service contract; the SSE wire format is
+        the browser's, older than Kafka here: the payload's keys become the
+        frame's keys, which is exactly the shape the Redis announcements
+        sent. Off-contract events are logged and skipped -- a board must not
+        stall on one bad message.
+        """
+        try:
+            event = TaskEvent.model_validate(raw_event)
+        except ValidationError:
+            logger.warning("Event off-contract, skipping")
+            return
+
+        # The payload goes in first: unpacking it last would let a wire-side
+        # payload key named "type" or "ts" overwrite the contract's own.
+        frame = dict(event.payload)
+        frame["type"] = event.type.value
+        frame["ts"] = event.ts
+        wire = json.dumps(frame)
+        self._fan_out(wire)
 
     def _fan_out(self, raw: str) -> None:
         """Push a raw JSON payload into every local queue, dropping if full."""
@@ -152,18 +129,26 @@ listener_task: asyncio.Task | None = None
 
 
 async def init_events() -> EventsHub | None:
-    """Start the hub and its pub/sub listener, or nothing if SSE is off."""
+    """Start the hub and its consumer, or nothing if SSE is off.
+
+    The consumer joins inside the listener task, so a broker that is down at
+    startup does not hold the gateway hostage: SSE answers 503 until the
+    group is joined, everything else serves on.
+    """
     global hub, listener_task
     if not SSE_ENABLED:
         return None
-    hub = EventsHub(redis_url=REDIS_URL, channel=SSE_CHANNEL, max_queue=SSE_MAX_QUEUE)
-    await hub.connect()
+    hub = EventsHub(
+        bootstrap_servers=KAFKA_BOOTSTRAP_URL,
+        topic=KAFKA_EVENTS_TOPIC,
+        max_queue=SSE_MAX_QUEUE,
+    )
     listener_task = asyncio.create_task(hub.run_listener())
     return hub
 
 
 async def close_events() -> None:
-    """Stop the listener before the hub it reads from."""
+    """Stop the listener before the consumer it drives."""
     global hub, listener_task
     if listener_task is not None:
         listener_task.cancel()

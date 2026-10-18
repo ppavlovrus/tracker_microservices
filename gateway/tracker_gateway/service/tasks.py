@@ -1,9 +1,10 @@
-"""Task orchestration: the bus, the cache and the change notifications.
+"""Task orchestration: the bus and the cache.
 
 The router above this layer knows HTTP and nothing else; the client below it
-knows the bus and nothing else. Everything in between lives here -- when a
-cached copy may be served, which keys a write invalidates, and who gets told
-that something changed.
+knows the bus and nothing else. What lives in between is the cache-aside
+decision: which cached copies may be served, and which keys a write
+invalidates. Announcing changes is not here anymore -- the worker that owns
+the data now publishes the facts to Kafka, where the SSE leg reads them.
 
 It is written in bus contracts, not in the HTTP schemas from ``api/schemas``.
 Importing those would point an inner layer at an outer one, and would make this
@@ -12,14 +13,12 @@ models at all.
 """
 
 import logging
-from datetime import UTC, datetime
 
 from pydantic import ValidationError
 from task_tracker_common.contracts.base import Contract
 from task_tracker_common.contracts.commands import TaskCreationContract, TaskUpdatePayloadContract
 from task_tracker_common.contracts.responses import TaskData, TaskList, TaskStats, TaskTag
 
-from ..broker.events import EventsHub
 from ..broker.tasks_client import TasksBusClient
 from ..core.config import CACHE_TTL_TASK, CACHE_TTL_TASKS_LIST
 from ..storage.cache import Cache
@@ -44,19 +43,16 @@ def _list_key(limit: int, offset: int) -> str:
 class TaskService:
     """Everything the gateway does with tasks, minus the HTTP."""
 
-    def __init__(self, bus: TasksBusClient, cache: Cache | None = None, events: EventsHub | None = None) -> None:
-        """Take the collaborators; ``cache`` and ``events`` are optional by design."""
+    def __init__(self, bus: TasksBusClient, cache: Cache | None = None) -> None:
+        """Take the collaborators; the cache is optional by design."""
         self._bus = bus
         self._cache = cache
-        self._events = events
 
     async def create(self, task: TaskCreationContract) -> TaskData:
         """Create a task, drop the cached pages it could appear on, announce it."""
         created = await self._bus.create(task)
 
         await self._drop_lists()
-        await self._announce("task.created", {"task": created.model_dump(mode="json")})
-
         return created
 
     async def get(self, task_id: int) -> TaskData:
@@ -104,7 +100,6 @@ class TaskService:
         updated = await self._bus.update(task_id, update)
 
         await self._invalidate(task_id)
-        await self._announce("task.updated", {"task": updated.model_dump(mode="json")})
 
         logger.info(f"Task {task_id} updated successfully")
         return updated
@@ -114,8 +109,6 @@ class TaskService:
         await self._bus.delete(task_id)
 
         await self._invalidate(task_id)
-        await self._announce("task.deleted", {"id": task_id})
-
         logger.info(f"Task {task_id} deleted successfully")
 
     async def add_tag(self, task_id: int, tag_id: int) -> list[TaskTag]:
@@ -123,8 +116,6 @@ class TaskService:
         tags = await self._bus.add_tag(task_id, tag_id)
 
         await self._invalidate(task_id)
-        await self._announce("task.updated", {"id": task_id})
-
         return tags.tags
 
     async def remove_tag(self, task_id: int, tag_id: int) -> list[TaskTag]:
@@ -132,8 +123,6 @@ class TaskService:
         tags = await self._bus.remove_tag(task_id, tag_id)
 
         await self._invalidate(task_id)
-        await self._announce("task.updated", {"id": task_id})
-
         return tags.tags
 
     # -- cache -------------------------------------------------------------
@@ -174,17 +163,3 @@ class TaskService:
         if self._cache is not None:
             await self._cache.delete(_task_key(task_id))
             await self._cache.delete_pattern(LIST_PATTERN)
-
-    # -- notifications -----------------------------------------------------
-
-    async def _announce(self, event_type: str, payload: dict) -> None:
-        """Best-effort SSE notification about a task change.
-
-        Never raised into the caller: a failed notification must not fail the
-        write it describes.
-        """
-        if self._events is None:
-            return
-
-        event = {"type": event_type, "ts": datetime.now(UTC).isoformat(), **payload}
-        await self._events.publish(event)

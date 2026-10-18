@@ -178,6 +178,8 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - METRICS_ENABLED=true
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - KAFKA_BOOTSTRAP_URL=kafka:9092
+      - KAFKA_EVENTS_TOPIC=task.events
       # The stand serves the characterization suite, not one human behind a
       # browser: ~250 requests in seconds, all from one IP. The default bucket
       # (60 tokens, 10/s) is sized for the browser and starves the suite, so
