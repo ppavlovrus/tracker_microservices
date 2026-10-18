@@ -110,3 +110,56 @@ async def test_one_request_is_one_trace_from_http_to_sql():
         if processes[span["processID"]]["serviceName"] == "tracker-tasks"
     ]
     assert len(worker_spans) >= 2, [span["operationName"] for span in worker_spans]
+
+
+async def test_the_trace_reaches_the_sse_consumer_through_the_topic():
+    """The same trace, continued through Kafka: HTTP -> bus -> SQL -> topic -> consumer.
+
+    The producer injects the command span into the message headers; the
+    consumer opens its span as that span's child, so the notification leg --
+    which no HTTP request ever waits for -- still lands inside the trace the
+    request started.
+    """
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=10.0, trust_env=False) as client:
+        login = await client.post("/auth/login", json={"username": "admin", "password": "admin"})
+        assert login.status_code == 200, login.text
+
+        traceparent = _own_traceparent()
+        created = await client.post(
+            "/tasks",
+            json={"title": "kafka trace probe", "creator_id": 1},
+            headers={"traceparent": traceparent},
+        )
+        assert created.status_code == 201, created.text
+        task_id = created.json()["id"]
+        await client.delete(f"/tasks/{task_id}")
+
+    # The consume span is the gateway's second batch: wait for it by name.
+    trace_id = traceparent.split("-")[1]
+    deadline = time.monotonic() + 30.0
+    trace = None
+    async with httpx.AsyncClient(base_url=JAEGER_URL, trust_env=False) as jaeger:
+        while time.monotonic() < deadline:
+            response = await jaeger.get(f"/api/traces/{trace_id}")
+            if response.status_code == 404:
+                await asyncio.sleep(1.0)
+                continue
+            data = response.json().get("data") or []
+            trace = data[0] if data else None
+            if trace is not None and any(s["operationName"] == "consume task.created" for s in trace["spans"]):
+                break
+            await asyncio.sleep(1.0)
+    assert trace is not None, f"Jaeger never received trace {trace_id}"
+
+    spans = trace["spans"]
+    processes = trace["processes"]
+    consume_span = next(s for s in spans if s["operationName"] == "consume task.created")
+
+    # The consumer's span belongs to the gateway, and hangs off a span of the
+    # worker -- the command span whose context the producer carried over.
+    assert processes[consume_span["processID"]]["serviceName"] == "tracker-gateway"
+    parents = {ref["spanID"] for ref in consume_span.get("references", []) if ref["refType"] == "CHILD_OF"}
+    worker_span_ids = {
+        s["spanID"] for s in spans if processes[s["processID"]]["serviceName"] == "tracker-tasks"
+    }
+    assert parents & worker_span_ids

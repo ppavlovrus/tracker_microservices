@@ -23,9 +23,15 @@ from typing import Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import KafkaError
+from opentelemetry import propagate, trace
+from opentelemetry.trace import SpanKind
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# A proxy until setup_telemetry installs the real provider; spans started
+# before that are no-ops, so the bus traces with or without telemetry.
+tracer = trace.get_tracer(__name__)
 
 # An event may not hold the write hostage. A broker that died after the
 # producer connected makes send_and_wait retry for minutes -- measured: a
@@ -90,12 +96,21 @@ class EventProducer:
         """
         if self._producer is None:
             return
+
+        # The current span travels as a traceparent header, the same way it
+        # crosses the RabbitMQ leg: the consumer continues this trace instead
+        # of starting an unrelated one.
+        carrier: dict[str, str] = {}
+        propagate.inject(carrier)
+        headers = [(name, value.encode("utf-8")) for name, value in carrier.items()]
+
         try:
             await asyncio.wait_for(
                 self._producer.send_and_wait(
                     self._topic,
                     key=key.encode("utf-8"),
                     value=json.dumps(event.model_dump(mode="json")).encode("utf-8"),
+                    headers=headers,
                 ),
                 timeout=_PUBLISH_TIMEOUT,
             )
@@ -178,16 +193,7 @@ class EventConsumer:
                 continue
             try:
                 async for message in self._consumer:
-                    if message.value is None:
-                        # A tombstone (compaction delete marker): no fact to tell.
-                        logger.warning("Event has no value (tombstone), skipping")
-                        continue
-                    try:
-                        event = json.loads(message.value.decode("utf-8"))
-                    except (ValueError, UnicodeDecodeError):
-                        logger.warning("Event does not parse as JSON, skipping")
-                        continue
-                    await handler(event)
+                    await self._dispatch(message, handler)
             except KafkaError as e:
                 logger.warning(f"Event consumer dropped, rejoining: {e}")
                 await self.stop()
@@ -198,3 +204,25 @@ class EventConsumer:
                 logger.warning(f"Event consumer crashed, rejoining: {e!r}")
                 await self.stop()
                 await asyncio.sleep(_REJOIN_DELAY)
+
+    async def _dispatch(self, message, handler: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+        """Decode one message and run the handler inside the trace it carries."""
+        if message.value is None:
+            # A tombstone (compaction delete marker): no fact to tell.
+            logger.warning("Event has no value (tombstone), skipping")
+            return
+
+        try:
+            event = json.loads(message.value.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            logger.warning("Event does not parse as JSON, skipping")
+            return
+
+        # The producer's span arrives in the headers; the handler runs inside
+        # its continuation, so the trace that started at the HTTP edge now
+        # reaches the SSE leg too.
+        extracted = {name: value.decode("utf-8") for name, value in (message.headers or [])}
+        context = propagate.extract(extracted)
+        name = f"consume {event.get('type', 'event')}"
+        with tracer.start_as_current_span(name, context=context, kind=SpanKind.CONSUMER):
+            await handler(event)
